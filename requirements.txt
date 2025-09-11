@@ -1,0 +1,11 @@
+# Dependências principais do projeto
+requests
+pandas
+psycopg2-binary
+apache-airflow
+sqlalchemy
+pyarrow
+fastparquet
+matplotlib
+seaborn
+python-dotenv
