@@ -1,10 +1,10 @@
 import psycopg2
 
 # Altere estes dados conforme sua configuração
-HOST = "host.docker.internal"      # Use 'postgres' se rodando de dentro do container Airflow, 'localhost' se rodando do seu computador
-PORT = 5544         # Porta interna do container (normalmente 5432)
+HOST = "localhost"      # Use 'postgres' se rodando de dentro do container Airflow, 'localhost' se rodando do seu computador
+PORT = 5433         # Porta interna do container (normalmente 5432)
 USER = "postgres"
-PASSWORD = "postgres"
+PASSWORD = "admin@0722"
 DBNAME = "desafio_db"
 
 def test_postgres_connection():
