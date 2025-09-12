@@ -20,7 +20,7 @@ def create_database_if_not_exists():
     """
     Cria o banco de dados de destino se ele não existir.
     """
-    hook = PostgresHook(postgres_conn_id="postgres_default", database="desafiodb")
+    hook = PostgresHook(postgres_conn_id="meu_postgres", database="desafio_db")
     conn = None
     cur = None
     try:
@@ -28,7 +28,7 @@ def create_database_if_not_exists():
         conn.autocommit = True
         cur = conn.cursor()
 
-        db_name = "desafiodb"
+        db_name = "desafio_db"
 
         # Verifica se o banco de dados já existe de forma segura
         cur.execute(SQL("SELECT 1 FROM pg_database WHERE datname = %s"), (db_name,))

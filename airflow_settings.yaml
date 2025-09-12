@@ -1,50 +1,25 @@
-# Configurações do Airflow
+# This file allows you to configure Airflow Connections, Pools, and Variables in a single place for local development only.
+# NOTE: json dicts can be added to the conn_extra field as yaml key value pairs. See the example below.
 
-# Conexões do banco de dados
-connections:
-  - conn_id: postgres_default
+# For more information, refer to our docs: https://www.astronomer.io/docs/astro/cli/develop-project#configure-airflow_settingsyaml-local-development-only
+# For questions, reach out to: https://support.astronomer.io
+# For issues create an issue ticket here: https://github.com/astronomer/astro-cli/issues
+
+airflow:
+  connections:
+  - conn_id: meu_postgres
     conn_type: postgres
-    description: "Conexão para o banco 'desafiodb'"
+    description: "Conexão para o banco 'airflow_db' no PostgreSQL"
     host: localhost
     port: 5544
-    schema: desafiodb
-    login: admin
-    password: admin@123
-    extra: 
-      {
-        "connect_timeout": 30,
-        "application_name": "airflow_etl"
-      }
-
-  # - conn_id: postgres_creation
-  #   conn_type: postgres
-  #   description: "Conexão para criar o banco de dados"
-  #   host: localhost
-  #   port: 5432
-  #   schema: postgres
-  #   login: postgres
-  #   password: postgres
-    
-# Variáveis do Airflow
-variables:
-  - key: api_url
-    value: "${API_URL}"
-    description: "URL da API de dados"
-    
-  - key: api_token
-    value: "${TOKEN}" 
-    description: "Token de autenticação da API"
-    
-  - key: max_retries
-    value: "5"
-    description: "Máximo de tentativas para requisições"
-    
-  - key: email_alerts
-    value: "true"
-    description: "Ativar alertas por email"
-
-# Pools (opcional)
-pools:
-  - pool_name: etl_pool
-    pool_slots: 2
-    pool_description: "Pool para tasks ETL"
+    schema: desafio_db
+    login: airflow
+    password: airflow123
+    extra: "{\"connect_timeout\": 30, \"application_name\": \"airflow_etl\"}"
+  pools:
+    - pool_name:
+      pool_slot:
+      pool_description:
+  variables:
+    - variable_name:
+      variable_value:

@@ -19,7 +19,6 @@ sys.path.append(str(Path(__file__).parent.parent / "etl"))
 from extract import main as extract_main
 from transform import main as transform_main
 from load import main as load_main
-from load import create_database_if_not_exists as database_main
 
 with DAG(
     dag_id="desafio_etl_maxinutri",
@@ -37,44 +36,44 @@ with DAG(
         """Executa a transformação dos dados."""
         transform_main()
 
-    # def run_create_database():
-    #     """Cria o banco de dados se ele não existir."""
-    #     # Use a nova conexão dedicada
-    #     hook = PostgresHook(postgres_conn_id="postgres_default")
-    #     conn = None
-    #     cur = None
-    #     try:
-    #         conn = hook.get_conn()
-    #         conn.autocommit = True
-    #         cur = conn.cursor()
+    def run_create_database():
+        """Cria o banco de dados se ele não existir."""
+        # Use a nova conexão dedicada
+        hook = PostgresHook(postgres_conn_id="meu_postgres")
+        conn = None
+        cur = None
+        try:
+            conn = hook.get_conn()
+            conn.autocommit = True
+            cur = conn.cursor()
             
-    #         db_name = "desafiodb"
+            db_name = "desafio_db"
 
-    #         cur.execute(SQL("SELECT * FROM pg_database WHERE datname = %s"), (db_name,))
-    #         exists = cur.fetchone()
+            cur.execute(SQL("SELECT * FROM pg_database WHERE datname = %s"), (db_name,))
+            exists = cur.fetchone()
 
-    #         if not exists:
-    #             logger.info(f"Criando o banco de dados '{db_name}'...")
-    #             cur.execute(SQL("CREATE DATABASE {}").format(Identifier(db_name)))
-    #             logger.info(f"Banco de dados '{db_name}' criado com sucesso.")
-    #         else:
-    #             logger.info(f"Banco de dados '{db_name}' já existe.")
+            if not exists:
+                logger.info(f"Criando o banco de dados '{db_name}'...")
+                cur.execute(SQL("CREATE DATABASE {}").format(Identifier(db_name)))
+                logger.info(f"Banco de dados '{db_name}' criado com sucesso.")
+            else:
+                logger.info(f"Banco de dados '{db_name}' já existe.")
 
-    #     except Exception as e:
-    #         logger.error(f"Erro ao criar banco de dados: {e}")
-    #         raise
-    #     finally:
-    #         if cur:
-    #             cur.close()
-    #         if conn:
-    #             conn.close()
+        except Exception as e:
+            logger.error(f"Erro ao criar banco de dados: {e}")
+            raise
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
     
     def run_load_task():
         """Cria a conexão e executa o carregamento dos dados no banco de dados."""
         conn = None
         cur = None
         try:
-            hook = PostgresHook(postgres_conn_id="postgres_default")
+            hook = PostgresHook(postgres_conn_id="meu_postgres")
             conn = hook.get_conn()
             conn.autocommit = False
             cur = conn.cursor()
@@ -102,14 +101,14 @@ with DAG(
         python_callable=run_transform_task
     )
 
-    # create_db_task = PythonOperator(
-    #     task_id="create_database_if_not_exists",
-    #     python_callable=run_create_database,
-    # )
+    create_db_task = PythonOperator(
+        task_id="create_database_if_not_exists",
+        python_callable=run_create_database,
+    )
 
     load_task = PythonOperator(
         task_id="load_data_to_postgres",
         python_callable=run_load_task,
     )
 
-    extract_task >> transform_task >> load_task
+    extract_task >> transform_task >> create_db_task >> load_task
