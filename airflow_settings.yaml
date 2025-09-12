@@ -7,15 +7,15 @@
 
 airflow:
   connections:
-  - conn_id: meu_postgres
-    conn_type: postgres
-    description: "Conexão para o banco 'airflow_db' no PostgreSQL"
-    host: localhost
-    port: 5544
-    schema: desafio_db
-    login: airflow
-    password: airflow123
-    extra: "{\"connect_timeout\": 30, \"application_name\": \"airflow_etl\"}"
+  # - conn_id: meu_postgres
+  #   conn_type: postgres
+  #   description: "Conexão para o banco 'airflow_db' no PostgreSQL"
+  #   host: localhost
+  #   port: 5544
+  #   schema: desafio_db
+  #   login: airflow
+  #   password: airflow123
+  #   extra: "{\"connect_timeout\": 30, \"application_name\": \"airflow_etl\"}"
   pools:
     - pool_name:
       pool_slot:

@@ -23,7 +23,7 @@ from load import main as load_main
 with DAG(
     dag_id="desafio_etl_maxinutri",
     start_date=pendulum.datetime(2023, 1, 1, tz="UTC"),
-    schedule=None,
+    schedule="@daily",
     catchup=False,
     tags=["etl", "desafio"],
 ) as dag:
@@ -39,7 +39,7 @@ with DAG(
     def run_create_database():
         """Cria o banco de dados se ele não existir."""
         # Use a nova conexão dedicada
-        hook = PostgresHook(postgres_conn_id="meu_postgres")
+        hook = PostgresHook(postgres_conn_id="postgres-default", database="postgres")
         conn = None
         cur = None
         try:
@@ -68,12 +68,43 @@ with DAG(
             if conn:
                 conn.close()
     
+    def run_apply_indexes():
+        """Aplica os índices no banco de dados."""
+        hook = PostgresHook(postgres_conn_id="postgres-default", schema="desafio_db")
+        conn = None
+        cur = None
+        try:
+            conn = hook.get_conn()
+            conn.autocommit = True
+            cur = conn.cursor()
+
+            indexes_path = Path(__file__).parent.parent / "sql" / "indexes.sql"
+            with open(indexes_path, "r", encoding="utf-8") as f:
+                sql_script = f.read()
+
+            # Executa múltiplos statements separados por ";"
+            statements = [stmt.strip() for stmt in sql_script.split(";") if stmt.strip()]
+            for stmt in statements:
+                cur.execute(stmt)
+
+            logger.info("✅ Índices aplicados com sucesso.")
+
+        except Exception as e:
+            logger.error(f"Erro ao aplicar índices: {e}")
+            raise
+        finally:
+            if cur:
+                cur.close()
+            if conn:
+                conn.close()
+
+    
     def run_load_task():
         """Cria a conexão e executa o carregamento dos dados no banco de dados."""
         conn = None
         cur = None
         try:
-            hook = PostgresHook(postgres_conn_id="meu_postgres")
+            hook = PostgresHook(postgres_conn_id="postgres-default")
             conn = hook.get_conn()
             conn.autocommit = False
             cur = conn.cursor()
@@ -110,5 +141,10 @@ with DAG(
         task_id="load_data_to_postgres",
         python_callable=run_load_task,
     )
+    
+    apply_indexes_task = PythonOperator(
+    task_id="apply_indexes",
+    python_callable=run_apply_indexes,
+    )
 
-    extract_task >> transform_task >> create_db_task >> load_task
+    extract_task >> transform_task >> create_db_task >> load_task >> apply_indexes_task

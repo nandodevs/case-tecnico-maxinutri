@@ -20,7 +20,7 @@ def create_database_if_not_exists():
     """
     Cria o banco de dados de destino se ele não existir.
     """
-    hook = PostgresHook(postgres_conn_id="meu_postgres", database="desafio_db")
+    hook = PostgresHook(postgres_conn_id="postgres-default")
     conn = None
     cur = None
     try:
