@@ -4,6 +4,7 @@
 -- Armazena informações descritivas sobre os clientes.
 -- A chave 'cliente_sk' é uma chave substituta (surrogate key) para a tabela de fatos.
 -- A chave 'cliente_id' é a chave de negócio (business key) e garante a unicidade dos clientes.
+
 CREATE TABLE IF NOT EXISTS dim_cliente (
     cliente_sk BIGSERIAL PRIMARY KEY,
     cliente_id VARCHAR(255) UNIQUE NOT NULL,

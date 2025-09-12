@@ -5,6 +5,8 @@ import os
 import numpy as np
 from pathlib import Path
 import logging
+from airflow.providers.postgres.hooks.postgres import PostgresHook
+from psycopg2.sql import SQL, Identifier
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -14,13 +16,40 @@ PROCESSED_DIR = Path(os.path.join(os.path.dirname(__file__), "..", "data", "proc
 CSV_PATH = PROCESSED_DIR / "dados_tratados.csv"
 SCHEMA_PATH = Path(os.path.join(os.path.dirname(__file__), "..", "sql", "schema.sql")).resolve()
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "desafiodb",
-    "user": "admin",
-    "password": "admin@123"
-}
+def create_database_if_not_exists():
+    """
+    Cria o banco de dados de destino se ele não existir.
+    """
+    hook = PostgresHook(postgres_conn_id="postgres_default", database="desafiodb")
+    conn = None
+    cur = None
+    try:
+        conn = hook.get_conn()
+        conn.autocommit = True
+        cur = conn.cursor()
+
+        db_name = "desafiodb"
+
+        # Verifica se o banco de dados já existe de forma segura
+        cur.execute(SQL("SELECT 1 FROM pg_database WHERE datname = %s"), (db_name,))
+        exists = cur.fetchone()
+
+        if not exists:
+            logger.info(f"Criando o banco de dados '{db_name}'...")
+            # Cria o banco de forma segura
+            cur.execute(SQL("CREATE DATABASE {}").format(Identifier(db_name)))
+            logger.info(f"Banco de dados '{db_name}' criado com sucesso.")
+        else:
+            logger.info(f"Banco de dados '{db_name}' já existe.")
+
+    except Exception as e:
+        logger.error(f"Erro ao criar banco de dados: {e}")
+        raise
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 def load_and_convert_data(csv_path):
     """
@@ -451,11 +480,9 @@ def insert_fato_pedido(cur, df):
     
     logger.info(f"TOTAL - Pedidos inseridos: {inserted}, Pulados: {skipped}")
 
-def main():
+# Seu novo main em load.py
+def main(cur):
     """Função principal para o ETL com controle robusto de transações."""
-    conn = None
-    cur = None
-    
     try:
         # 1. Carregar e converter dados
         if not CSV_PATH.exists():
@@ -463,60 +490,50 @@ def main():
         
         df = load_and_convert_data(CSV_PATH)
         
-        # 2. Conectar ao banco
-        logger.info("Conectando ao banco de dados...")
-        conn = psycopg2.connect(**DB_CONFIG)
-        conn.autocommit = False  # Controle manual de transações
-        cur = conn.cursor()
+        # O cur já é um cursor válido fornecido pela DAG
         
-        # 3. Criar schema
+        # 2. Criar schema
         logger.info("=== CRIANDO SCHEMA ===")
         execute_schema(cur)
-        conn.commit()
+        cur.connection.commit()
         
-        # 4. Inserir dimensões (cada uma em sua própria transação)
+        # 3. Inserir dimensões (cada uma em sua própria transação)
         logger.info("=== INSERINDO DIMENSÕES ===")
         
         insert_dim_cliente(cur, df)
-        conn.commit()
+        cur.connection.commit()
         logger.info("Dimensão clientes commitada")
         
         insert_dim_produto(cur, df)
-        conn.commit()
+        cur.connection.commit()
         logger.info("Dimensão produtos commitada")
         
         insert_dim_tempo(cur, df)
-        conn.commit()
+        cur.connection.commit()
         logger.info("Dimensão tempo commitada")
         
         insert_dim_avaliacao(cur, df)
-        conn.commit()
+        cur.connection.commit()
         logger.info("Dimensão avaliação commitada")
         
-        # 5. Inserir fatos (processamento em lotes)
+        # 4. Inserir fatos (processamento em lotes)
         logger.info("=== INSERINDO FATOS ===")
         insert_fato_pedido(cur, df)
         
         logger.info("✅ ETL concluído com sucesso!")
-
+        
     except FileNotFoundError as e:
         logger.error(f"Arquivo não encontrado: {e}")
-        if conn:
-            conn.rollback()
+        raise
     except psycopg2.Error as e:
         logger.error(f"Erro de banco de dados: {e}")
-        if conn:
-            conn.rollback()
+        cur.connection.rollback()
     except Exception as e:
         logger.error(f"Erro inesperado: {e}")
-        if conn:
-            conn.rollback()
+        cur.connection.rollback()
     finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
-        logger.info("Conexões fechadas.")
+        # A conexão será fechada pela DAG
+        pass
 
 if __name__ == "__main__":
     main()

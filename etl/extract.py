@@ -34,14 +34,6 @@ def fetch_page(page: int):
             time.sleep(BACKOFF_FACTOR ** attempt)
     raise Exception(f"Falha ao obter página {page} após {MAX_RETRIES} tentativas.")
 
-# def validate_data(df: pd.DataFrame) -> pd.DataFrame:
-#     # Remove duplicados
-#     df = df.drop_duplicates()
-#     # Remove linhas com nulos críticos
-#     df = df.dropna(subset=["order_id", "customer_id", "product_id"])
-#     # ...adicionar outras validações se necessário...
-#     return df
-
 def main():
     print("Iniciando extração de dados da API...")
     all_data = []

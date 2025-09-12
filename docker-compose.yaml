@@ -1,0 +1,10 @@
+# Exemplo de configuração
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: admin  # Note o nome do usuário aqui
+      POSTGRES_PASSWORD: admin@123  # Note a senha aqui
+      POSTGRES_DB: desafiodb  # Nome do banco de dados
+    ports:
+      - "5544:5432"

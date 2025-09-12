@@ -20,7 +20,7 @@ docker run --name meu_postgres \
   -e POSTGRES_USER=admin \
   -e POSTGRES_PASSWORD=admin@123 \
   -e POSTGRES_DB=desafiodb \
-  -p 5432:5432 \
+  -p 5433 \
   -d postgres:15
   
 *(Adicionar diagrama em breve)*
