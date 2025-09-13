@@ -26,3 +26,4 @@ sentry-sdk
 pytest
 black
 flake8
+flask-appbuilder
