@@ -39,7 +39,7 @@ with DAG(
     def run_create_database():
         """Cria o banco de dados se ele não existir."""
         # Use a nova conexão dedicada
-        hook = PostgresHook(postgres_conn_id="postgres-default", database="postgres")
+        hook = PostgresHook(postgres_conn_id="meu_postgres")
         conn = None
         cur = None
         try:
@@ -70,7 +70,7 @@ with DAG(
     
     def run_apply_indexes():
         """Aplica os índices no banco de dados."""
-        hook = PostgresHook(postgres_conn_id="postgres-default", schema="desafio_db")
+        hook = PostgresHook(postgres_conn_id="meu_postgres", schema="desafio_db")
         conn = None
         cur = None
         try:
@@ -104,7 +104,7 @@ with DAG(
         conn = None
         cur = None
         try:
-            hook = PostgresHook(postgres_conn_id="postgres-default")
+            hook = PostgresHook(postgres_conn_id="meu_postgres")
             conn = hook.get_conn()
             conn.autocommit = False
             cur = conn.cursor()
