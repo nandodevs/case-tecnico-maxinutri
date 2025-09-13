@@ -106,3 +106,8 @@ Desktop.ini
 *.swp
 *.swo
 upgrade-test* 
+
+# Airflow
+airflow.cfg
+airflow.db
+.airflowignore

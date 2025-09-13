@@ -16,41 +16,7 @@ PROCESSED_DIR = Path(os.path.join(os.path.dirname(__file__), "..", "data", "proc
 CSV_PATH = PROCESSED_DIR / "dados_tratados.csv"
 SCHEMA_PATH = Path(os.path.join(os.path.dirname(__file__), "..", "sql", "schema.sql")).resolve()
 
-def create_database_if_not_exists():
-    """
-    Cria o banco de dados de destino se ele não existir.
-    """
-    hook = PostgresHook(postgres_conn_id="meu_postgres")
-    conn = None
-    cur = None
-    try:
-        conn = hook.get_conn()
-        conn.autocommit = True
-        cur = conn.cursor()
-
-        db_name = "desafio_db"
-
-        # Verifica se o banco de dados já existe de forma segura
-        cur.execute(SQL("SELECT 1 FROM pg_database WHERE datname = %s"), (db_name,))
-        exists = cur.fetchone()
-
-        if not exists:
-            logger.info(f"Criando o banco de dados '{db_name}'...")
-            # Cria o banco de forma segura
-            cur.execute(SQL("CREATE DATABASE {}").format(Identifier(db_name)))
-            logger.info(f"Banco de dados '{db_name}' criado com sucesso.")
-        else:
-            logger.info(f"Banco de dados '{db_name}' já existe.")
-
-    except Exception as e:
-        logger.error(f"Erro ao criar banco de dados: {e}")
-        raise
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
-
+# Função para carregar e converter dados
 def load_and_convert_data(csv_path):
     """
     Carrega o CSV e converte todas as colunas para os tipos corretos.
@@ -143,30 +109,32 @@ def load_and_convert_data(csv_path):
     return df
 
 def execute_schema(cur):
-    """Executa o script de criação de schema com tratamento de erro robusto."""
+    """Executa o script de criação de schema completo"""
     try:
         with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
             schema_sql = f.read()
         
-        # Executar cada statement separadamente com tratamento de erro individual
+        # Executar cada statement separadamente
         statements = [stmt.strip() for stmt in schema_sql.split(';') if stmt.strip()]
         
         for i, statement in enumerate(statements):
             try:
-                cur.execute(statement)
-                logger.info(f"Statement {i+1}/{len(statements)} executado com sucesso")
+                if statement:  # Só executar se não for vazio
+                    cur.execute(statement)
+                    if i % 5 == 0:  # Log a cada 5 statements
+                        logger.info(f"Executando statement {i+1}/{len(statements)}")
+                        
             except psycopg2.Error as e:
-                logger.warning(f"Erro no statement {i+1}: {e}")
-                # Se houver erro, fazer rollback e tentar continuar
-                cur.connection.rollback()
-                raise
+                # Ignorar erro se tabela/índice já existir
+                if "already exists" not in str(e):
+                    logger.warning(f"Erro no statement {i+1}: {e}")
+                    raise
+                else:
+                    logger.debug(f"Entidade já existe: {statement[:50]}...")
         
         logger.info("Schema criado/atualizado com sucesso.")
         
-    except FileNotFoundError as e:
-        logger.error(f"Arquivo schema.sql não encontrado: {e}")
-        raise
-    except psycopg2.Error as e:
+    except Exception as e:
         logger.error(f"Erro ao executar o schema: {e}")
         raise
 
