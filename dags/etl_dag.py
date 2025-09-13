@@ -56,7 +56,7 @@ Erro: {error_message}
 
 Status: Pipeline completamente parado
 Ação: Intervenção imediata necessária""",
-                to_emails=["admin@empresa.com", "team@empresa.com"]
+                to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
             )
             
     except Exception as e:
@@ -80,7 +80,7 @@ Data: {execution_date}
 Status: Todos os dados processados com sucesso
 
 Tempo de execução: {context['dag_run'].duration}""",
-                to_emails=["team@empresa.com"]
+                to_emails=["bugdroidgamesbr@gmail.com, nando.devs@gmail.com"]
             )
             
     except Exception as e:
@@ -278,7 +278,7 @@ with DAG(
 ✅ Validação: Qualidade dos dados verificada
 
 Status: Pipeline completo executado com sucesso""",
-                    to_emails=["team@empresa.com", "management@empresa.com"]
+                    to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
                 )
                 logger.info("✅ Relatório final enviado")
             else:
