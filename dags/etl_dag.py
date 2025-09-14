@@ -10,7 +10,6 @@ from psycopg2.sql import SQL, Identifier
 from pathlib import Path
 import logging
 from psycopg2 import OperationalError, ProgrammingError, DataError, InterfaceError
-from airflow.utils.state import State
 
 # Import do sistema de alertas
 try:
@@ -35,33 +34,58 @@ from transform import main as transform_main
 from load import main as load_main
 
 # Callbacks para monitoring
-def dag_failure_callback(context):
-    """Callback para falhas globais da DAG"""
+def on_failure_callback(context):
+    """
+    Callback para falhas de tarefas do Airflow - Versão Corrigida
+    """
     try:
         dag_id = context['dag'].dag_id
-        execution_date = context['execution_date']
+        task_id = context['task_instance'].task_id
+        execution_date = context.get('execution_date', pendulum.now())  # ← Correção aqui
         
-        error_message = str(context.get('exception', 'Erro desconhecido'))
+        # Formata a data se existir, senão usa timestamp atual
+        if isinstance(execution_date, pendulum.DateTime):
+            exec_date_str = execution_date.to_datetime_string()
+        else:
+            exec_date_str = str(pendulum.now())
         
-        logger.critical(f"❌ FALHA GLOBAL na DAG {dag_id}: {error_message}")
+        exception = context.get('exception', 'Erro desconhecido')
+        error_message = str(exception)
         
-        if alert_system:
-            alert_system.send_email_alert(
-                f"🚨 FALHA GLOBAL - DAG {dag_id}",
-                f"""Falha global no pipeline ETL:
+        # Mensagem simples para logs
+        simple_message = f"""Falha no pipeline ETL:
 
 DAG: {dag_id}
-Data: {execution_date}
+Tarefa: {task_id}
+Data: {exec_date_str}
+
 Erro: {error_message}
 
-Status: Pipeline completamente parado
-Ação: Intervenção imediata necessária""",
-                to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
-            )
-            
+Acesse o Airflow para mais detalhes."""
+        
+        # Conteúdo HTML para email
+        html_content = alert_system.create_html_alert(dag_id, task_id, error_message, exec_date_str)
+        
+        # Enviar alerta
+        success = alert_system.send_email_alert(
+            f"🚨 Falha na DAG {dag_id} - Tarefa {task_id}", 
+            simple_message, 
+            html_content=html_content
+        )
+        
+        if success:
+            logger.info(f"✅ Alerta de falha enviado para {dag_id}.{task_id}")
+        else:
+            logger.warning(f"⚠️ Falha ao enviar alerta de email para {dag_id}.{task_id}")
+        
+        logger.error(f"❌ Falha na tarefa {task_id} da DAG {dag_id}: {error_message}")
+        
     except Exception as e:
-        logger.error(f"Erro no callback de falha global: {e}")
-
+        logger.error(f"❌ Erro no sistema de alertas: {e}")
+        # Fallback: pelo menos logue o erro original
+        if 'exception' in context:
+            logger.error(f"Erro original: {context['exception']}")
+            
 def dag_success_callback(context):
     """Callback para sucesso global da DAG"""
     try:
@@ -92,8 +116,8 @@ with DAG(
     schedule="@daily",
     catchup=False,
     tags=["etl", "desafio"],
-    on_failure_callback=dag_failure_callback,
-    on_success_callback=dag_success_callback,
+    on_failure_callback=on_failure_callback, #Enviar alerta em falhas
+    #on_success_callback=None, # Alerta de sucesso global desativado para evitar spam
     default_args={
         'on_failure_callback': on_failure_callback,
         'on_success_callback': on_success_callback,
