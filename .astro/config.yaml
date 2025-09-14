@@ -1,0 +1,40 @@
+project:
+    name: desafio-tecnico-maxinutri
+    version: 1.0.0
+    description: Projeto de ETL para o desafio técnico da Maxinutri
+    authors:
+        - name: Sisnando Junior
+        - email: nando.devs@gmail.com
+    license: MIT
+    repository:
+        type: git
+        url: "https://github.com/nandodevs/desafio-tecnico-maxinutri"
+    keywords:
+        - etl
+        - airflow
+        - postgres
+        - python
+    scripts:
+        - etl/extract.py
+        - etl/transform.py
+        - etl/load.py
+    dependencies:
+        python: ">=3.8"
+        pandas: "^2.0.3"
+        requests: "^2.31.0"
+        psycopg2-binary: "^2.9.6"
+        apache-airflow: "^2.10.3"
+        apache-airflow-providers-postgres: "^5.1.0"
+    dev-dependencies:
+        black: "^23.9.1"
+        isort: "^5.12.0"
+        flake8: "^6.1.0"
+        mypy: "^1.4.1"
+        pytest: "^7.4.0"
+        pytest-cov: "^4.1.0"
+        tox: "^4.12.1"
+
+
+
+    
+

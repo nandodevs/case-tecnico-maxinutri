@@ -1,0 +1,7 @@
+version: '3.8'
+
+networks:
+  airflow_network:
+    driver: bridge
+    name: airflow_network
+  

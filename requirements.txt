@@ -1,0 +1,29 @@
+# Requirements para Airflow ETL Pipeline
+
+# Core dependencies
+pandas
+numpy
+requests
+python-dotenv
+
+# Database
+psycopg2-binary
+SQLAlchemy
+
+# Data processing
+pyarrow
+
+# Airflow providers
+apache-airflow
+apache-airflow-providers-postgres
+apache-airflow-providers-http
+
+
+# Monitoring and logging
+sentry-sdk
+
+# Development/Testing
+pytest
+black
+flake8
+flask-appbuilder
