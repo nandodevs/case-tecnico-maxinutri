@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # This file allows you to configure Airflow Connections, Pools, and Variables in a single place for local development only.
 # NOTE: json dicts can be added to the conn_extra field as yaml key value pairs. See the example below.
 
@@ -28,4 +29,36 @@ airflow:
   networks:
     - network_name: 
       driver: 
+=======
+# This file allows you to configure Airflow Connections, Pools, and Variables in a single place for local development only.
+# NOTE: json dicts can be added to the conn_extra field as yaml key value pairs. See the example below.
+
+# For more information, refer to our docs: https://www.astronomer.io/docs/astro/cli/develop-project#configure-airflow_settingsyaml-local-development-only
+# For questions, reach out to: https://support.astronomer.io
+# For issues create an issue ticket here: https://github.com/astronomer/astro-cli/issues
+
+airflow:
+  connections:
+    - conn_id: nome-da-conexao
+      conn_type: postgres
+      conn_host: host.docker.internal
+      conn_schema:  nome-do-banco
+      conn_login: login-do-banco
+      conn_password: senha-do-banco
+      conn_port: 5432 
+      conn_description: 
+      conn_extra:
+        sslmode: 
+        connect_timeout: 
+  pools:
+    - pool_name:
+      pool_slot:
+      pool_description:
+  variables:
+    - variable_name:
+      variable_value:
+  networks:
+    - network_name: 
+      driver: 
+>>>>>>> 8ef029d9c58e300164d0708fa1707f9c196cc777
    

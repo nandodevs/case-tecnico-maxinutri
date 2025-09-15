@@ -2,7 +2,10 @@
 __pycache__/
 *.py[cod]
 *$py.class
+<<<<<<< HEAD
 .env
+=======
+>>>>>>> 8ef029d9c58e300164d0708fa1707f9c196cc777
 
 # C extensions
 *.so
@@ -113,5 +116,9 @@ upgrade-test*
 airflow.cfg
 airflow.db
 .airflowignore
+<<<<<<< HEAD
 airflow-settings.yaml
 logs/
+=======
+airflow_settings.yaml
+>>>>>>> 8ef029d9c58e300164d0708fa1707f9c196cc777

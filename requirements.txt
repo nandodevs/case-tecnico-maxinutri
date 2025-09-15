@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Requirements para Airflow ETL Pipeline
 
 # Core dependencies
@@ -27,3 +28,34 @@ pytest
 black
 flake8
 flask-appbuilder
+=======
+# Requirements para Airflow ETL Pipeline
+
+# Core dependencies
+pandas
+numpy
+requests
+python-dotenv
+
+# Database
+psycopg2-binary
+SQLAlchemy
+
+# Data processing
+pyarrow
+
+# Airflow providers
+apache-airflow
+apache-airflow-providers-postgres
+apache-airflow-providers-http
+
+
+# Monitoring and logging
+sentry-sdk
+
+# Development/Testing
+pytest
+black
+flake8
+flask-appbuilder
+>>>>>>> 8ef029d9c58e300164d0708fa1707f9c196cc777

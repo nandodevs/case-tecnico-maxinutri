@@ -8,13 +8,20 @@ project:
     license: MIT
     repository:
         type: git
+<<<<<<< HEAD
         url: "https://github.com/nandodevs/case-tecnico-maxinutri"
+=======
+        url: "https://github.com/nandodevs/desafio-tecnico-maxinutri"
+>>>>>>> 8ef029d9c58e300164d0708fa1707f9c196cc777
     keywords:
         - etl
         - airflow
         - postgres
         - python
+<<<<<<< HEAD
         - docker
+=======
+>>>>>>> 8ef029d9c58e300164d0708fa1707f9c196cc777
     scripts:
         - etl/extract.py
         - etl/transform.py
