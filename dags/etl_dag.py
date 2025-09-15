@@ -1,164 +1,173 @@
 # dags/etl_dag.py
 from __future__ import annotations
-import datetime
+
 import pendulum
 import sys
 from airflow.models.dag import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.utils.context import Context
-from airflow.utils.email import send_email
 from psycopg2.sql import SQL, Identifier
 from pathlib import Path
-import logging, traceback
-from airflow.exceptions import AirflowException
+import logging
 from psycopg2 import OperationalError, ProgrammingError, DataError, InterfaceError
+from airflow.utils.state import State
+from typing import Optional, List
 
-logger = logging.getLogger(__name__)
-
-# Adiciona o diretório `etl` ao PYTHONPATH para que os scripts possam ser importados
+# Adiciona o diretório `etl` ao PYTHONPATH
 sys.path.append(str(Path(__file__).parent.parent / "etl"))
 
 # Importa as funções principais dos seus scripts
-from extract import main as extract_main
-from transform import main as transform_main
-from load import main as load_main
+from etl.extract import main as extract_main
+from etl.transform import main as transform_main
+from etl.load import main as load_main
 
-# Callback para falhas - ENVIA EMAIL REAL
-def send_alert_on_failure(context: Context):
-    """
-    Função para enviar alerta em caso de falha na tarefa
-    """
+# Import do sistema de alertas
+try:
+    from etl.monitoring import AlertSystem
+except ImportError as e:
+    logging.warning(f"Sistema de alertas não disponível: {e}")
+    # Fallback simples
+    class AlertSystem:
+        def __init__(self):
+            pass
+        def send_email_alert(self, *args, **kwargs):
+            logging.warning("AlertSystem não inicializado. Email de alerta não enviado.")
+
+# Cria uma instância de fallback, caso o módulo monitoring falhe
+alert_system_fallback = AlertSystem()
+
+logger = logging.getLogger(__name__)
+
+# ---
+# Funções de Callback
+
+def on_failure_callback(context):
+    """Callback para falhas de tarefas do Airflow."""
     try:
+        alert_system = AlertSystem()
         dag_id = context['dag'].dag_id
         task_id = context['task_instance'].task_id
-        execution_date = context.get('execution_date', 'N/A')
         
-        # Formata a data se estiver disponível
-        if execution_date != 'N/A' and hasattr(execution_date, 'strftime'):
-            execution_date_str = execution_date.strftime('%Y-%m-%d %H:%M:%S')
+        # Correção aqui: usa .get() para evitar erro se a chave não existir
+        execution_date = context.get('execution_date', pendulum.now())
+        
+        exception = context.get('exception', 'Erro desconhecido')
+        
+        subject = f"Falha na DAG {dag_id} - Tarefa {task_id}"
+        error_message = str(exception)
+        
+        is_critical = any(keyword in error_message.lower() for keyword in ['connection', 'database', 'timeout', 'critical', 'urgent'])
+        
+        simple_message = f"""Falha no pipeline ETL:
+DAG: {dag_id}
+Tarefa: {task_id}
+Data: {execution_date}
+Severidade: {'CRÍTICA' if is_critical else 'Normal'}
+Erro: {error_message}
+Acesse o Airflow para mais detalhes."""
+        
+        html_content = alert_system.create_html_alert(dag_id, task_id, error_message, execution_date, is_critical)
+        
+        success = alert_system.send_email_alert(subject, simple_message, html_content=html_content)
+        
+        if success:
+            logger.info(f"✅ Alerta de falha enviado para {dag_id}.{task_id}")
         else:
-            execution_date_str = str(execution_date)
-        
-        # Captura a exceção real e traceback completo
-        exception = context.get('exception')
-        if exception:
-            error_message = str(exception)
-            traceback_msg = ''.join(traceback.format_exception(
-                type(exception), exception, exception.__traceback__
-            ))
-        else:
-            error_message = "Erro desconhecido (sem exceção capturada)"
-            traceback_msg = "Nenhum traceback disponível"
-        
-        # Log do erro
-        logger.error(f"❌ Falha na tarefa {task_id} do DAG {dag_id}")
-        logger.error(f"📅 Data de execução: {execution_date_str}")
-        logger.error(f"💡 Mensagem de erro: {error_message}")
-        
-        # Email com detalhes técnicos completos
-        subject = f"🚨 ALERTA: Falha no Airflow - DAG: {dag_id}, Tarefa: {task_id}"
-        body = f"""
-        <h3>🚨 Falha detectada no processo ETL</h3>
-        
-        <strong>📋 Detalhes da Tarefa:</strong><br>
-        • <strong>DAG:</strong> {dag_id}<br>
-        • <strong>Tarefa:</strong> {task_id}<br>
-        • <strong>Data de execução:</strong> {execution_date_str}<br><br>
-        
-        <strong>❌ Mensagem de Erro:</strong><br>
-        <pre>{error_message}</pre><br>
-        
-        <strong>🔍 Detalhe Técnico Completo:</strong><br>
-        <pre>{traceback_msg}</pre><br>
-        
-        <strong>📊 Status:</strong> FALHA<br>
-        <strong>🕒 Hora da falha:</strong> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br><br>
-        
-        <em>Por favor, verifique os logs do Airflow para mais detalhes.</em>
-        """
-        
-        logger.info(f"📧 Tentando enviar email de alerta: {subject}")
-        
-        # ENVIA EMAIL REAL
-        try:
-            send_email(
-                to=['bugdroidgamesbr@gmail.com', 'nando.devs@gmail.com'],
-                subject=subject,
-                html_content=body
-            )
-            logger.info("✅ Email de alerta enviado com sucesso!")
-        except Exception as email_error:
-            logger.error(f"❌ Falha ao enviar email: {email_error}")
-            logger.error(traceback.format_exc())
-        
+            logger.warning(f"⚠️ Falha ao enviar alerta de email para {dag_id}.{task_id}")
+            
     except Exception as e:
-        logger.error(f"❌ Erro no sistema de alertas: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Erro no sistema de alertas: {e}")
 
-# Callback para sucesso do DAG completo
-def dag_success_callback(context: Context):
-    """Callback para quando o DAG inteiro é executado com sucesso"""
+def on_success_callback(context):
+    """Callback para sucesso de tarefas do Airflow."""
     try:
+        alert_system = AlertSystem()
         dag_id = context['dag'].dag_id
-        execution_date = context.get('execution_date', 'N/A')
+        task_id = context['task_instance'].task_id
         
-        if execution_date != 'N/A' and hasattr(execution_date, 'strftime'):
-            execution_date_str = execution_date.strftime('%Y-%m-%d %H:%M:%S')
+        # Correção aqui: usa .get() para evitar erro se a chave não existir
+        execution_date = context.get('execution_date', pendulum.now())
+        
+        subject = f"✅ Sucesso na DAG {dag_id} - Tarefa {task_id}"
+        message = f"""Tarefa executada com sucesso:
+DAG: {dag_id}
+Tarefa: {task_id}
+Data: {execution_date}
+Pipeline concluído com sucesso!"""
+        
+        success = alert_system.send_email_alert(subject, message)
+        
+        if success:
+            logger.info(f"✅ Email de sucesso enviado para {dag_id}.{task_id}")
         else:
-            execution_date_str = str(execution_date)
-        
-        subject = f"✅ SUCESSO: DAG {dag_id} executado com sucesso"
-        body = f"""
-        <h3>✅ Processamento ETL Concluído com Sucesso</h3>
-        
-        <strong>📋 Detalhes:</strong><br>
-        • <strong>DAG:</strong> {dag_id}<br>
-        • <strong>Data de execução:</strong> {execution_date_str}<br>
-        • <strong>Status:</strong> SUCESSO COMPLETO<br>
-        • <strong>Hora de conclusão:</strong> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br><br>
-        
-        <strong>📊 Fluxo executado:</strong><br>
-        ✅ Extração de dados da API<br>
-        ✅ Transformação e limpeza dos dados<br>
-        ✅ Criação do banco de dados<br>
-        ✅ Carga no Data Warehouse<br>
-        ✅ Validação da qualidade<br>
-        ✅ Relatório final<br><br>
-        
-        <em>Todas as tarefas foram executadas com sucesso!</em>
-        """
-        
-        logger.info(f"📧 Tentando enviar email de sucesso: {subject}")
-        
-        try:
-            send_email(
-                to=['bugdroidgamesbr@gmail.com', 'nando.devs@gmail.com'],
-                subject=subject,
-                html_content=body
-            )
-            logger.info("✅ Email de sucesso enviado!")
-        except Exception as email_error:
-            logger.error(f"❌ Falha ao enviar email de sucesso: {email_error}")
-                
+            logger.info(f"✅ Tarefa {task_id} concluída (email não enviado)")
+            
     except Exception as e:
-        logger.warning(f"⚠️ Erro no callback de sucesso do DAG: {e}")
+        logger.error(f"❌ Erro no sistema de alertas de sucesso: {e}")
 
-# Configuração dos callbacks
-on_failure_callback = send_alert_on_failure
+def dag_failure_callback(context):
+    """Callback para falhas globais da DAG."""
+    try:
+        alert_system = AlertSystem()
+        dag_id = context['dag'].dag_id
+        execution_date = context['execution_date']
+        error_message = str(context.get('exception', 'Erro desconhecido'))
+        
+        logger.critical(f"❌ FALHA GLOBAL na DAG {dag_id}: {error_message}")
+        
+        alert_system.send_email_alert(
+            f"🚨 FALHA GLOBAL - DAG {dag_id}",
+            f"""Falha global no pipeline ETL:
+DAG: {dag_id}
+Data: {execution_date}
+Erro: {error_message}
+Status: Pipeline completamente parado
+Ação: Intervenção imediata necessária""",
+            to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
+        )
+            
+    except Exception as e:
+        logger.error(f"Erro no callback de falha global: {e}")
+
+def dag_success_callback(context):
+    """Callback para sucesso global da DAG."""
+    try:
+        alert_system = AlertSystem()
+        dag_id = context['dag'].dag_id
+        execution_date = context['execution_date']
+        
+        logger.info(f"✅ DAG {dag_id} concluída com sucesso")
+        
+        duration = context['dag_run'].duration
+        
+        alert_system.send_email_alert(
+            f"✅ SUCESSO - DAG {dag_id} Concluída",
+            f"""Pipeline ETL executado com sucesso:
+DAG: {dag_id}
+Data: {execution_date}
+Status: Todos os dados processados com sucesso
+Tempo de execução: {duration} segundos""",
+            to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
+        )
+            
+    except Exception as e:
+        logger.error(f"Erro no callback de sucesso global: {e}")
+
+# ---
+# Definição da DAG
 
 with DAG(
-    dag_id="case_tecnico_maxinutri",
+    dag_id="desafio_etl_maxinutri",
     start_date=pendulum.datetime(2023, 1, 1, tz="UTC"),
     schedule="@daily",
     catchup=False,
     tags=["etl", "desafio"],
-    on_success_callback=dag_success_callback,  # Callback para sucesso do DAG completo
+    on_failure_callback=dag_failure_callback,
+    on_success_callback=dag_success_callback,
     default_args={
-        'owner': "Sisnando Junior",
-        'start_date': pendulum.datetime(2023, 1, 1, tz="UTC"),
         'on_failure_callback': on_failure_callback,
-        'email_on_failure': False,  # Desativa emails padrão do Airflow
+        #'on_success_callback': False # on_success_callback,
+        'email_on_failure': False, # Desativar emails padrão do Airflow
         'email_on_retry': False,
         'retries': 2,
         'retry_delay': pendulum.duration(minutes=5),
@@ -174,7 +183,6 @@ with DAG(
             logger.info("✅ Extração concluída com sucesso.")
         except Exception as e:
             logger.error(f"❌ Erro na extração: {e}")
-            logger.error(traceback.format_exc())
             raise
 
     def run_transform_task():
@@ -185,7 +193,6 @@ with DAG(
             logger.info("✅ Transformação concluída com sucesso.")
         except Exception as e:
             logger.error(f"❌ Erro na transformação: {e}")
-            logger.error(traceback.format_exc())
             raise
 
     def run_create_database():
@@ -212,15 +219,12 @@ with DAG(
 
         except OperationalError as e:
             logger.error(f"❌ Erro de conexão ao criar banco: {e}")
-            logger.error(traceback.format_exc())
             raise
         except ProgrammingError as e:
             logger.error(f"❌ Erro de SQL ao criar banco: {e}")
-            logger.error(traceback.format_exc())
             raise
         except Exception as e:
             logger.error(f"❌ Erro inesperado ao criar banco: {e}")
-            logger.error(traceback.format_exc())
             raise
         finally:
             if cur:
@@ -229,7 +233,7 @@ with DAG(
                 conn.close()
     
     def run_load_task():
-        """Cria a conexão e executa o carregamento dos dados no banco de dados."""
+        """Cria a conexão e executa o carregamento dos dados no banco de dados!"""
         conn = None
         cur = None
         try:
@@ -237,9 +241,8 @@ with DAG(
             conn = hook.get_conn()
             conn.autocommit = False
             
-            # Configura timeout para evitar operações muito longas
             cur = conn.cursor()
-            cur.execute("SET statement_timeout = 300000;")  # 5 minutos
+            cur.execute("SET statement_timeout = 300000;")
             
             logger.info("Iniciando carga de dados...")
             load_main(cur=cur)
@@ -248,19 +251,16 @@ with DAG(
             
         except (OperationalError, InterfaceError) as e:
             logger.error(f"❌ Erro de conexão durante carga: {e}")
-            logger.error(traceback.format_exc())
             if conn:
                 conn.rollback()
             raise
         except DataError as e:
             logger.error(f"❌ Erro de dados durante carga: {e}")
-            logger.error(traceback.format_exc())
             if conn:
                 conn.rollback()
             raise
         except Exception as e:
             logger.error(f"❌ Erro inesperado durante carga: {e}")
-            logger.error(traceback.format_exc())
             if conn:
                 conn.rollback()
             raise
@@ -279,7 +279,6 @@ with DAG(
             conn = hook.get_conn()
             cur = conn.cursor()
             
-            # Lista de verificações a serem realizadas
             checks = [
                 ("Tabelas existem", """
                     SELECT COUNT(*) 
@@ -305,19 +304,17 @@ with DAG(
                     logger.warning(f"Falha na verificação '{check_name}': {e}")
                     results[check_name] = f"Erro: {e}"
             
-            # Verificar se todas as tabelas essenciais existem
             if results.get("Tabelas existem", 0) < 5:
                 raise Exception("Não todas as tabelas foram criadas corretamente")
             
-            # Verificar se há dados nas tabelas principais
             if results.get("Total de pedidos", 0) == 0:
-                logger.warning("⚠️  Tabela de pedidos está vazia")
+                logger.warning("⚠️ Tabela de pedidos está vazia")
             
             if results.get("Total de clientes", 0) == 0:
-                logger.warning("⚠️  Tabela de clientes está vazia")
+                logger.warning("⚠️ Tabela de clientes está vazia")
             
             if results.get("Total de produtos", 0) == 0:
-                logger.warning("⚠️  Tabela de produtos está vazia")
+                logger.warning("⚠️ Tabela de produtos está vazia")
             
             logger.info("✅ Validação concluída com sucesso")
             logger.info(f"📊 Resultados: {results}")
@@ -326,7 +323,6 @@ with DAG(
             
         except Exception as e:
             logger.error(f"❌ Falha na validação: {e}")
-            logger.error(traceback.format_exc())
             raise
         finally:
             if cur:
@@ -337,25 +333,21 @@ with DAG(
     def send_final_report():
         """Envia relatório final do processamento."""
         try:
-            logger.info("📊 Preparando relatório final do ETL...")
+            alert_system = AlertSystem()
+            alert_system.send_email_alert(
+                "📊 Relatório Diário - ETL Concluído",
+                """Processamento ETL diário concluído com sucesso!
+✅ Extração: Dados extraídos da API
+✅ Transformação: Dados limpos e processados
+✅ Carga: Dados carregados no Data Warehouse
+✅ Validação: Qualidade dos dados verificada
+Status: Pipeline completo executado com sucesso""",
+                to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
+            )
+            logger.info("✅ Relatório final enviado")
             
-            # Simula envio de relatório
-            logger.info("✅ Processamento ETL concluído com sucesso!")
-            logger.info("📋 Relatório:")
-            logger.info("  ✅ Extração: Dados extraídos da API")
-            logger.info("  ✅ Transformação: Dados limpos e processados")
-            logger.info("  ✅ Carga: Dados carregados no Data Warehouse")
-            logger.info("  ✅ Validação: Qualidade dos dados verificada")
-            logger.info("  📊 Status: Pipeline completo executado com sucesso")
-                
         except Exception as e:
             logger.warning(f"⚠️ Falha ao enviar relatório: {e}")
-            logger.error(traceback.format_exc())
-
-    # Tarefa de teste para verificar alertas
-    def test_failure_task():
-        """Tarefa de teste que falha propositalmente"""
-        raise ConnectionError("❌ ERRO DE CONEXÃO: Falha simulada para testar alertas de email - Timeout na conexão com PostgreSQL")
 
     # Definindo as tarefas
     extract_task = PythonOperator(
@@ -406,15 +398,5 @@ with DAG(
         execution_timeout=pendulum.duration(minutes=5),
     )
 
-    # test_task = PythonOperator(
-    #     task_id="test_alert_system",
-    #     python_callable=test_failure_task,
-    #     retries=0,
-    #     execution_timeout=pendulum.duration(minutes=2),
-    # )
-
-    # Definindo as dependências principais
+    # Definindo as dependências
     extract_task >> transform_task >> create_db_task >> load_task >> validate_task >> report_task
-
-    # ⚠️ PARA TESTAR ALERTAS: Descomente a linha abaixo
-    # test_task  # Remove o comentário para testar os alertas de email
