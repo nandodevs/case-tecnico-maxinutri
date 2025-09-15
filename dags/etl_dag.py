@@ -233,7 +233,7 @@ with DAG(
                 conn.close()
     
     def run_load_task():
-        """Cria a conexão e executa o carregamento dos dados no banco de dados."""
+        """Cria a conexão e executa o carregamento dos dados no banco de dados!"""
         conn = None
         cur = None
         try:
