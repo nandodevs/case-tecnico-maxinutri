@@ -53,18 +53,18 @@ def on_failure_callback(context):
         
         exception = context.get('exception', 'Erro desconhecido')
         
-        subject = f"Falha na DAG {dag_id} - Tarefa {task_id}"
+        subject = f"⚠️ Falha na DAG {dag_id} - Tarefa {task_id}"
         error_message = str(exception)
         
         is_critical = any(keyword in error_message.lower() for keyword in ['connection', 'database', 'timeout', 'critical', 'urgent'])
         
         simple_message = f"""Falha no pipeline ETL:
-DAG: {dag_id}
-Tarefa: {task_id}
-Data: {execution_date}
-Severidade: {'CRÍTICA' if is_critical else 'Normal'}
-Erro: {error_message}
-Acesse o Airflow para mais detalhes."""
+        DAG: {dag_id}
+        Tarefa: {task_id}
+        Data: {execution_date}
+        Severidade: {'CRÍTICA' if is_critical else 'Normal'}
+        Erro: {error_message}
+        Acesse o Airflow para mais detalhes."""
         
         html_content = alert_system.create_html_alert(dag_id, task_id, error_message, execution_date, is_critical)
         
@@ -90,10 +90,10 @@ def on_success_callback(context):
         
         subject = f"✅ Sucesso na DAG {dag_id} - Tarefa {task_id}"
         message = f"""Tarefa executada com sucesso:
-DAG: {dag_id}
-Tarefa: {task_id}
-Data: {execution_date}
-Pipeline concluído com sucesso!"""
+        DAG: {dag_id}
+        Tarefa: {task_id}
+        Data: {execution_date}
+        Pipeline concluído com sucesso!"""
         
         success = alert_system.send_email_alert(subject, message)
         
@@ -118,12 +118,12 @@ def dag_failure_callback(context):
         alert_system.send_email_alert(
             f"🚨 FALHA GLOBAL - DAG {dag_id}",
             f"""Falha global no pipeline ETL:
-DAG: {dag_id}
-Data: {execution_date}
-Erro: {error_message}
-Status: Pipeline completamente parado
-Ação: Intervenção imediata necessária""",
-            to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
+        DAG: {dag_id}
+        Data: {execution_date}
+        Erro: {error_message}
+        Status: Pipeline completamente parado
+        Ação: Intervenção imediata necessária""",
+                    to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
         )
             
     except Exception as e:
@@ -143,11 +143,11 @@ def dag_success_callback(context):
         alert_system.send_email_alert(
             f"✅ SUCESSO - DAG {dag_id} Concluída",
             f"""Pipeline ETL executado com sucesso:
-DAG: {dag_id}
-Data: {execution_date}
-Status: Todos os dados processados com sucesso
-Tempo de execução: {duration} segundos""",
-            to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
+        DAG: {dag_id}
+        Data: {execution_date}
+        Status: Todos os dados processados com sucesso
+        Tempo de execução: {duration} segundos""",
+                    to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
         )
             
     except Exception as e:
@@ -158,16 +158,17 @@ Tempo de execução: {duration} segundos""",
 
 with DAG(
     dag_id="desafio_etl_maxinutri",
-    start_date=pendulum.datetime(2023, 1, 1, tz="UTC"),
+    start_date=pendulum.datetime(2023, 1, 1, tz="America/Sao_Paulo"),
     schedule="@daily",
     catchup=False,
     tags=["etl", "desafio"],
     on_failure_callback=dag_failure_callback,
     on_success_callback=dag_success_callback,
     default_args={
-        'on_failure_callback': on_failure_callback,
-        #'on_success_callback': False # on_success_callback,
-        'email_on_failure': False, # Desativar emails padrão do Airflow
+        # ATENÇÃO: As correções foram aplicadas aqui.
+        'on_failure_callback': on_failure_callback, # Adicionado
+        #'on_success_callback': on_success_callback, # Adicionado
+        'email_on_failure': False, 
         'email_on_retry': False,
         'retries': 2,
         'retry_delay': pendulum.duration(minutes=5),
@@ -233,11 +234,11 @@ with DAG(
                 conn.close()
     
     def run_load_task():
-        """Cria a conexão e executa o carregamento dos dados no banco de dados!"""
+        """Cria a conexão e executa o carregamento dos dados no banco de dados."""
         conn = None
         cur = None
         try:
-            hook = PostgresHook(postgres_conn_id="postgres-default")
+            hook = PostgresHook(postgres_conn_id="postgres-default-erro")
             conn = hook.get_conn()
             conn.autocommit = False
             
@@ -362,15 +363,15 @@ Status: Pipeline completo executado com sucesso""",
         task_id="transform_data",
         python_callable=run_transform_task,
         retries=2,
-        retry_delay=pendulum.duration(seconds=30),
-        execution_timeout=pendulum.duration(minutes=30),
+        retry_delay=pendulum.duration(seconds=10),
+        execution_timeout=pendulum.duration(minutes=5),
     )
 
     create_db_task = PythonOperator(
         task_id="create_database_if_not_exists",
         python_callable=run_create_database,
         retries=2,
-        retry_delay=pendulum.duration(seconds=30),
+        retry_delay=pendulum.duration(seconds=10),
         execution_timeout=pendulum.duration(minutes=5),
     )
 
@@ -378,8 +379,8 @@ Status: Pipeline completo executado com sucesso""",
         task_id="load_data_to_postgres",
         python_callable=run_load_task,
         retries=3,
-        retry_delay=pendulum.duration(seconds=60),
-        execution_timeout=pendulum.duration(minutes=60),
+        retry_delay=pendulum.duration(seconds=30),
+        execution_timeout=pendulum.duration(minutes=30),
     )
 
     validate_task = PythonOperator(
