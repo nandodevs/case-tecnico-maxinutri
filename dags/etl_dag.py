@@ -125,7 +125,7 @@ def dag_failure_callback(context):
         Ação: Intervenção imediata necessária""",
                     to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
         )
-            
+            #teste
     except Exception as e:
         logger.error(f"Erro no callback de falha global: {e}")
 
