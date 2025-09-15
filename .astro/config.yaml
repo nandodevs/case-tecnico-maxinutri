@@ -14,6 +14,7 @@ project:
         - airflow
         - postgres
         - python
+        - docker
     scripts:
         - etl/extract.py
         - etl/transform.py
