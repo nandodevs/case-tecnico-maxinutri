@@ -16,7 +16,7 @@ A arquitetura é composta por:
 4. **Data Warehouse**: Modelo dimensional em PostgreSQL com tabelas de fato e dimensão.
 5. **Monitoramento**: Logs estruturados e sistema de alertas por email para falhas e métricas de performance.
 
-![Arquitetura do Sistema](/docs/imgs/flow_etl.png)
+<img src="./docs/imgs/flow_etl.png" alt="Fluxo ETL"/>
 
 ## 🛠️ Tecnologias Utilizadas
 
