@@ -4,34 +4,19 @@
 
 Solução completa de ETL para processamento de dados de e-commerce, implementando um Data Warehouse dimensional com PostgreSQL e orquestração via Apache Airflow. Este projeto processa dados de uma API de e-commerce, realiza transformações e carrega em um modelo dimensional otimizado para análise.
 
-![Arquitetura do Sistema](https://via.placeholder.com/800x400.png?text=Diagrama+de+Arquitetura+ETL)
-
 ## 🏗️ Arquitetura do Sistema
+A arquitetura é composta por:
+1. **Fonte de Dados**: API RESTful paginada com dados de clientes, produtos e pedidos.
+2. **Data Lake**: Armazenamento bruto dos dados extraídos em formatos Parquet e CSV.
+3. **ETL Pipeline**: Orquestrado pelo Apache Airflow, dividido em três
+    etapas principais:
+    - **Extração**: Coleta de dados da API com tratamento de paginação e erros.
+    - **Transformação**: Limpeza, validação e enriquecimento dos dados.
+    - **Carga**: Inserção eficiente no Data Warehouse PostgreSQL.
+4. **Data Warehouse**: Modelo dimensional em PostgreSQL com tabelas de fato e dimensão.
+5. **Monitoramento**: Logs estruturados e sistema de alertas por email para falhas e métricas de performance.
 
-```mermaid
-graph TB
-    API[API REST] -->|JSON| EXTRACT[Extract.py]
-    EXTRACT -->|Parquet/CSV| RAW[Data Lake - Raw]
-    RAW -->|Dados Brutos| TRANSFORM[Transform.py]
-    TRANSFORM -->|Dados Tratados| PROCESSED[Data Lake - Processed]
-    PROCESSED -->|CSV Limpo| LOAD[Load.py]
-    LOAD -->|Inserção| DW[PostgreSQL DW]
-    
-    subgraph "Orquestração Airflow"
-        DAG[DAG ETL]
-        DAG --> EXTRACT
-        DAG --> TRANSFORM
-        DAG --> LOAD
-    end
-    
-    subgraph "Monitoramento"
-        ALERTS[Sistema de Alertas]
-        LOGS[Logging Centralizado]
-    end
-    
-    DW -->|Consulta| BI[Ferramentas BI]
-    DW -->|Análise| DS[Data Science]
-```
+![Arquitetura do Sistema](./docs/imgs/flow_etl.png)
 
 ## 🛠️ Tecnologias Utilizadas
 
@@ -55,6 +40,8 @@ graph TB
 **Tabela de Fato:**
 - `fato_pedido` - Métricas e fatos dos pedidos (preço, frete, status, datas)
 
+<img src="./docs/imgs/schema_visual_db.png" alt="Modelo Dimensional" width="800"/>
+
 ### 🤔 Por que Modelo Estrela?
 
 Escolhi o modelo estrela porque:
@@ -64,13 +51,14 @@ Escolhi o modelo estrela porque:
 4. **Escalabilidade**: Adequado para crescimento gradual de dados
 5. **Compatibilidade**: Melhor integração com ferramentas BI
 
+
 ## ⚙️ Configuração e Instalação
 
 ### Pré-requisitos
 
 ```bash
 # Clone o repositório
-git clone https://github.com/seu-usuario/desafio-engenheiro-dados.git
+git clone https://github.com/nandodevs/desafio-engenheiro-dados.git
 cd desafio-engenheiro-dados
 
 # Instalar dependências
@@ -87,9 +75,9 @@ Edite o arquivo `.env` com suas configurações:
 ```env
 # API Configuration
 API_URL=https://teste-engenheiro.onrender.com
-TOKEN=chavetoken
+TOKEN="sua chave token"
 
-# Database Configuration
+# Adicione as configurações do banco Postgres no airflow_settings.yaml
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_DB=desafio_db
@@ -103,29 +91,21 @@ EMAIL_USER=seu-email@gmail.com
 EMAIL_PASSWORD=sua-senha
 ```
 
-### Execução com Docker
+### Execução com Astronomer (Astro CLI)
+
+Instale o Astro CLI no seu computador (Windows):
 
 ```bash
-# Subir ambiente completo
-docker-compose up -d
-
-# Executar ETL manualmente
-docker-compose run airflow-worker python -m etl.main
-
-# Verificar logs
-docker-compose logs -f airflow-webserver
+winget install -e --id Astronomer.Astro
 ```
 
-### Execução Manual
-
+- Execute os comandos abaixo dentro da pasta do projeto:
 ```bash
-# Pipeline completo
-python -m etl.extract
-python -m etl.transform  
-python -m etl.load
+# Iniciar a estrutura de pastas e arquivos necessários
+astro dev init
 
-# Ou executar via Airflow
-airflow dags trigger desafio_etl
+#Criar os container Docker e abre a navegador com o Airflow
+astro dev start
 ```
 
 ## 🔧 Estrutura do Projeto
