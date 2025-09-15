@@ -90,8 +90,33 @@ EMAIL_PORT=587
 EMAIL_USER=seu-email@gmail.com
 EMAIL_PASSWORD=sua-senha
 ```
+Renomeio o arquivo ".env.example para .env" e adicione as variávies necessárias:
 
-### Execução com Astronomer (Astro CLI)
+```env
+# Configurações da API
+TOKEN = "token da api"
+API_URL = "https://teste-engenheiro.onrender.com/data"
+
+# Configurações do Airflow
+AIRFLOW__CORE__LOAD_EXAMPLES=False
+AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+
+# Configurações de Email (opcional)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=seuemail@gmail.com
+SMTP_PASSWORD=codigoapp
+
+# Email que enviará os alertas (pode ser o mesmo ou diferente)
+SMTP_MAIL_FROM=seuemail@gmail.com
+
+# Lista de emails que receberão os alertas (separados por vírgula)
+ALERT_RECIPIENTS=email-destinatario@gmail.com
+
+# Email específico para falhas críticas
+CRITICAL_ALERTS=email-destinatario@gmail.com
+```
+
 
 Instale o Astro CLI no seu computador (Windows):
 
@@ -127,14 +152,13 @@ projeto-desafio/
 ├── tests/                   # Testes automatizados
 │   ├── test_extract.py
 │   ├── test_transform.py
-│   └── test_load.py
-├── docker/                  # Configurações Docker
-│   ├── Dockerfile
-│   └── docker-compose.yml
+│   └── test_load.py  
 ├── scripts/                 # Scripts auxiliares
 │   └── validate_new_data.py # Validação de novos dados
 └── docs/                    # Documentação
     └── architecture.md     # Diagramas de arquitetura
+    Dockerfile              # Configurações Docker
+    docker-compose.yml       
 ```
 
 ## 🎯 Funcionalidades Implementadas
@@ -163,37 +187,7 @@ projeto-desafio/
 - Métricas de performance do ETL
 - Validação pós-carga automática
 
-## 📈 Performance e Otimizações
-
-### Técnicas Implementadas:
-1. **Particionamento**: Tabelas preparadas para particionamento temporal
-2. **Indexação**: Índices otimizados para queries de negócio
-3. **Batch Processing**: Inserção em lotes de 100-1000 registros
-4. **Data Types**: Tipos de dados apropriados para cada coluna
-5. **Memory Mapping**: Uso eficiente de memória com Pandas
-
-### Resultados Esperados:
-- **Tempo de ETL**: < 30 minutos para 1MM de registros
-- **Uso de Memória**: < 2GB RAM para dataset completo
-- **Storage**: Redução de 70% com Parquet + compressão
-- **Disponibilidade**: 99.9% de uptime do pipeline
-
-## 🧪 Testes e Validação
-
-### Testes Implementados:
-
-```bash
-# Executar suite de testes completa
-python -m pytest tests/ -v
-
-# Testes específicos por módulo
-python -m pytest tests/test_extract.py -v
-python -m pytest tests/test_transform.py -v  
-python -m pytest tests/test_load.py -v
-
-# Teste de validação com dados novos
-python scripts/validate_new_data.py
-```
+## 🧪 Validação de Dados:
 
 ### Validação de Dados:
 - Verificação de integridade referencial entre dimensões e fatos
@@ -202,45 +196,105 @@ python scripts/validate_new_data.py
 - Completeness check para campos obrigatórios
 
 ## 🔮 Próximas Melhorias
-
-### Short-term (1-2 meses):
-- [ ] Cache de queries dimensionais para performance
-- [ ] Compressão colunar no PostgreSQL com TimescaleDB
-- [ ] Materialized views para dashboards em tempo real
-- [ ] Implementação completa de alertas por email
-
-### Long-term (3-6 meses):
+### Longo-prazo (3-6 meses):
 - [ ] Streaming pipeline com Kafka/Spark Streaming
 - [ ] Migração para cloud (BigQuery/Snowflake + Airflow Cloud)
 - [ ] Real-time dashboards com Metabase/Grafana
 - [ ] Integração com modelos de Machine Learning
 - [ ] Sistema de data quality monitoring contínuo
 
-## 📊 Métricas de Sucesso
+## Descrição detalhada das etapas do ETL
 
-| Métrica | Valor Esperado | Status |
-|---------|---------------|---------|
-| Disponibilidade | 99.9% | ✅ |
-| Tempo de Processamento | < 30min | ✅ |
-| Qualidade dos Dados | > 99% | ✅ |
-| Uso de Recursos | < 2GB RAM | ✅ |
-| Latência dos Dados | < 1 hora | ✅ |
+### Extract
+- Consome a API paginada (`/data?token=...&page=N`).
+- Implementa retries exponenciais com `tenacity` (parâmetros: up to 5 tentativas, backoff exponencial com máximo de 60s).
+- Persiste cada página como `data/raw/page_N.json` e grava `_meta.json` com informação de paginação e contagens.
+- Em caso de erro irreversível (status não 200 após retries), a task falha e o erro é logado com stacktrace.
 
-## 🤝 Contribuição
+### Explore / Profiling
+- Consolida todos os objetos `dados` das páginas em um DataFrame (pandas).
+- Gera `reports/profile.md` contendo: linhas, colunas, nulos por coluna, distinct, e amostras de valores.
+- Escreve `data/processed/records.csv` para uso da etapa de transformação.
 
-1. Fork o projeto
-2. Crie sua feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit suas mudanças (`git commit -m 'Add AmazingFeature'`)
-4. Push para a branch (`git push origin feature/AmazingFeature`)
-5. Abra um Pull Request
+### Transform
+- Lê `data/processed/records.csv` (ou consolida direto dos JSONs se CSV não existir).
+- Converte colunas de data (`*_timestamp`, `*_at`, `date*`) para datetime (`pandas.to_datetime` com `errors='coerce'`).
+- Converte colunas numéricas (ex.: `price`, `freight_value`, `product_weight_g`, dimensões do produto) para numérico com `pd.to_numeric(..., errors='coerce')`.
+- Executa validações sobre os dados (antes do load):
+  - Checagem de valores nulos em colunas críticas (`order_id`, `customer_id`, `order_purchase_timestamp`).
+  - Checagem de duplicados em `order_id` (ou chave candidata definida).
+  - Checagem de datas inválidas (linhas com `NaT` após parsing).
+- Se houver problemas de validação, a etapa levanta `ValueError` e salva `reports/validation_report.txt` com detalhes. O pipeline encerra nesse ponto (evita ingestão de dados sujos).
 
-## 📄 Licença
+### Load (PostgreSQL)
+- Conecta ao Postgres usando SQLAlchemy/psycopg2.
+- Cria schema/tabelas (se necessário) e carrega os dados validados em `fato_pedido` (nomeada conforme o case) com `df.to_sql(..., if_exists='replace' ou 'append')` — a estratégia usada no projeto pode ser configurada (full replace para entrega, incremental em produção).
+- Opcional: cria/atualiza `dim_tempo` a partir da primeira coluna de data encontrada (upsert simples).
 
-Este projeto está sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para detalhes.
+---
 
-## 👥 Autores
+## Tratamento de erros & Logs
+- Retries/backoff: extração usa `tenacity` para proteger contra falhas temporárias da API. Logs mostram tentativas e backoff aplicados.
+- Validações explícitas: transform valida e interrompe o pipeline com relatório em `reports/validation_report.txt` sempre que encontra problemas críticos.
+- Logs: recomenda-se usar `logging` do Python com configuração por variável `LOG_LEVEL`. Logs por padrão podem ser configurados para gravar em `logs/etl.log`. No Airflow, cada task possui sua própria saída de log no UI e discos montados.
+- Erro no Airflow: qualquer exceção não capturada faz a task falhar e o Airflow registra o traceback completo. Use retries do Airflow (configuráveis no DAG) para falhas transitórias também.
 
-- [Seu Nome](https://github.com/seu-usuario)
+---
+
+## Schema do Data Warehouse (exemplo baseado no projeto)
+A imagem do banco está em `docs/imgs/schema_visual_db.png` (fornecida) e o diagrama ETL está em `docs/imgs/etl_flow.png` (gerado). Tabelas principais esperadas no DW:
+
+- dim_cliente (cliente_id, nome, cidade, estado, zip_prefix, ...)
+- dim_produto (product_id, nome_categoria, peso_g, comprimento_cm, altura_cm, largura_cm, ...)
+- dim_avaliacao (review_id, review_score, comment, created_at, answered_at, ...)
+- dim_tempo (date_key, year, month, day, weekday)
+- fato_pedido (order_id, customer_id -> dim_cliente, product_id -> dim_produto, order_status, price, freight_value, order_purchase_timestamp -> dim_tempo_key, ...)
+
+Exemplo simples de criação (em `sql/schema.sql`):
+```sql
+CREATE TABLE IF NOT EXISTS public.dim_cliente (
+  customer_id TEXT PRIMARY KEY,
+  customer_city TEXT,
+  customer_state TEXT,
+  customer_zip_code_prefix INT
+);
+
+CREATE TABLE IF NOT EXISTS public.dim_produto (
+  product_id TEXT PRIMARY KEY,
+  product_category_name TEXT,
+  product_weight_g INT,
+  product_length_cm INT,
+  product_height_cm INT,
+  product_width_cm INT
+);
+
+CREATE TABLE IF NOT EXISTS public.dim_tempo (
+  date_key DATE PRIMARY KEY,
+  year INT,
+  month INT,
+  day INT,
+  weekday INT
+);
+
+CREATE TABLE IF NOT EXISTS public.fato_pedido (
+  order_id TEXT PRIMARY KEY,
+  customer_id TEXT,
+  product_id TEXT,
+  order_status TEXT,
+  order_purchase_timestamp TIMESTAMP,
+  price NUMERIC,
+  freight_value NUMERIC
+);
+```
+
+---
+
+## Observabilidade e testes
+- Relatórios: `reports/profile.md` (profiling inicial) e `reports/validation_report.txt` (falhas de validação).
+- Testes unitários: recomenda-se adicionar testes para as funções de parsing/validação (ex.: `tests/etl/test_transform.py`).
+- Checks: contagens por etapa (raw rows vs loaded rows) e checksums podem ser adicionados a uma tabela de metadata para auditoria.
+
+---
 
 ## 🙋‍♂️ FAQ
 
@@ -274,8 +328,6 @@ Esta solução demonstra habilidades completas em engenharia de dados, desde ing
 - ✅ Sistema de monitoramento e alertas
 - ✅ Testes automatizados e validação de dados
 - ✅ Preparação para escalabilidade futura
-
-**Próximos passos sugeridos:** Implementar os alertas por email completos e adicionar dashboard de monitoramento com Metabase ou Grafana.
 
 ---
 

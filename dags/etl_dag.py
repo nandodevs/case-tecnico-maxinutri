@@ -47,7 +47,10 @@ def on_failure_callback(context):
         alert_system = AlertSystem()
         dag_id = context['dag'].dag_id
         task_id = context['task_instance'].task_id
-        execution_date = context['execution_date']
+        
+        # Correção aqui: usa .get() para evitar erro se a chave não existir
+        execution_date = context.get('execution_date', pendulum.now())
+        
         exception = context.get('exception', 'Erro desconhecido')
         
         subject = f"Falha na DAG {dag_id} - Tarefa {task_id}"
@@ -81,7 +84,9 @@ def on_success_callback(context):
         alert_system = AlertSystem()
         dag_id = context['dag'].dag_id
         task_id = context['task_instance'].task_id
-        execution_date = context['execution_date']
+        
+        # Correção aqui: usa .get() para evitar erro se a chave não existir
+        execution_date = context.get('execution_date', pendulum.now())
         
         subject = f"✅ Sucesso na DAG {dag_id} - Tarefa {task_id}"
         message = f"""Tarefa executada com sucesso:
@@ -161,7 +166,7 @@ with DAG(
     on_success_callback=dag_success_callback,
     default_args={
         'on_failure_callback': on_failure_callback,
-        'on_success_callback': on_success_callback,
+        #'on_success_callback': False # on_success_callback,
         'email_on_failure': False, # Desativar emails padrão do Airflow
         'email_on_retry': False,
         'retries': 2,
