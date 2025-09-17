@@ -1,4 +1,4 @@
-# 📊 Desafio Técnico - Engenheiro de Dados
+# 📊 Desafio Técnico Maxinutri - Engenheiro de Dados
 
 ## 📋 Visão Geral
 
