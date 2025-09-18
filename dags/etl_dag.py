@@ -157,7 +157,7 @@ Tempo de execução: {duration} segundos""",
 # Definição da DAG
 
 with DAG(
-    dag_id="desafio_etl_maxinutri",
+    dag_id="pipeline_etl_maxinutri",
     start_date=pendulum.datetime(2023, 1, 1, tz="America/Sao_Paulo"),
     schedule="@daily",
     catchup=False,
@@ -207,7 +207,7 @@ with DAG(
             conn.autocommit = True
             cur = conn.cursor()
             
-            db_name = "desafio_db"
+            db_name = "case_dw"
 
             cur.execute(SQL("SELECT 1 FROM pg_database WHERE datname = %s"), (db_name,))
             exists = cur.fetchone()
@@ -274,7 +274,7 @@ with DAG(
 
     def validate_etl_process():
         """Validação simplificada do ETL."""
-        hook = PostgresHook(postgres_conn_id="postgres-default", schema="desafio_db")
+        hook = PostgresHook(postgres_conn_id="postgres-default", schema="case_dw")
         conn = None
         cur = None
         try:

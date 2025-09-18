@@ -30,7 +30,7 @@ def fetch_page(page: int):
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            print(f"Erro na requisição da página {page} (tentativa {attempt}): {e}")
+            print(f"Erro na requisição da página {page} -  (reconexão - {attempt}): {e}")
             time.sleep(BACKOFF_FACTOR ** attempt)
     raise Exception(f"Falha ao obter página {page} após {MAX_RETRIES} tentativas.")
 

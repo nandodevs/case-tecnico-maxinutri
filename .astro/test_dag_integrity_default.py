@@ -1,14 +1,22 @@
 """Test the validity of all DAGs. **USED BY DEV PARSE COMMAND DO NOT EDIT**"""
 
 from contextlib import contextmanager
+from unittest.mock import patch
 import logging
 import os
+import sys
 
 import pytest
 
 from airflow.models import DagBag, Variable, Connection
 from airflow.hooks.base import BaseHook
 from airflow.utils.db import initdb
+ 
+# Monkeypatch for Windows environments to handle 'register_at_fork'
+if sys.platform == "win32":
+    # This patch prevents `AttributeError: module 'os' has no attribute 'register_at_fork'` on Windows
+    # by providing a dummy function during the multiprocessing module's import time.
+    patch('multiprocessing.util.register_at_fork', lambda *args, **kwargs: True).start()
 
 # init airflow database
 initdb()

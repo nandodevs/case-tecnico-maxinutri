@@ -10,11 +10,11 @@ airflow:
     - conn_id: postgres-default
       conn_type: postgres
       conn_host: host.docker.internal
-      conn_schema: desafio_db 
+      conn_schema: case_dw 
       conn_login: postgres
       conn_password: admin123
       conn_port: 5545
-      conn_description: Local Postgres DB
+      coon_description: Local Database Postgres
       conn_extra:
         sslmode: disable
         connect_timeout: 50
