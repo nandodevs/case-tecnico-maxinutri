@@ -39,91 +39,39 @@ alert_system_fallback = AlertSystem()
 logger = logging.getLogger(__name__)
 
 # ---
-# Funções de Callback
-
-def on_failure_callback(context):
-    """Callback para falhas de tarefas do Airflow."""
-    try:
-        alert_system = AlertSystem()
-        dag_id = context['dag'].dag_id
-        task_id = context['task_instance'].task_id
-        
-        # Correção aqui: usa .get() para evitar erro se a chave não existir
-        execution_date = context.get('execution_date', pendulum.now())
-        
-        exception = context.get('exception', 'Erro desconhecido')
-        
-        subject = f"Falha na DAG {dag_id} - Tarefa {task_id}"
-        error_message = str(exception)
-        
-        is_critical = any(keyword in error_message.lower() for keyword in ['connection', 'database', 'timeout', 'critical', 'urgent'])
-        
-        simple_message = f"""Falha no pipeline ETL:
-DAG: {dag_id}
-Tarefa: {task_id}
-Data: {execution_date}
-Severidade: {'CRÍTICA' if is_critical else 'Normal'}
-Erro: {error_message}
-Acesse o Airflow para mais detalhes."""
-        
-        html_content = alert_system.create_html_alert(dag_id, task_id, error_message, execution_date, is_critical)
-        
-        success = alert_system.send_email_alert(subject, simple_message, html_content=html_content)
-        
-        if success:
-            logger.info(f"✅ Alerta de falha enviado para {dag_id}.{task_id}")
-        else:
-            logger.warning(f"⚠️ Falha ao enviar alerta de email para {dag_id}.{task_id}")
-            
-    except Exception as e:
-        logger.error(f"❌ Erro no sistema de alertas: {e}")
-
-def on_success_callback(context):
-    """Callback para sucesso de tarefas do Airflow."""
-    try:
-        alert_system = AlertSystem()
-        dag_id = context['dag'].dag_id
-        task_id = context['task_instance'].task_id
-        
-        # Correção aqui: usa .get() para evitar erro se a chave não existir
-        execution_date = context.get('execution_date', pendulum.now())
-        
-        subject = f"✅ Sucesso na DAG {dag_id} - Tarefa {task_id}"
-        message = f"""Tarefa executada com sucesso:
-DAG: {dag_id}
-Tarefa: {task_id}
-Data: {execution_date}
-Pipeline concluído com sucesso!"""
-        
-        success = alert_system.send_email_alert(subject, message)
-        
-        if success:
-            logger.info(f"✅ Email de sucesso enviado para {dag_id}.{task_id}")
-        else:
-            logger.info(f"✅ Tarefa {task_id} concluída (email não enviado)")
-            
-    except Exception as e:
-        logger.error(f"❌ Erro no sistema de alertas de sucesso: {e}")
+# Funções de Callback globais da DAG
 
 def dag_failure_callback(context):
     """Callback para falhas globais da DAG."""
     try:
         alert_system = AlertSystem()
         dag_id = context['dag'].dag_id
+        
+        # Acessa o objeto da tarefa que falhou e o URL do log
+        failed_task_instance = context.get('task_instance')
+        failed_task_id = failed_task_instance.task_id if failed_task_instance else 'N/D'
+        log_url = failed_task_instance.log_url if failed_task_instance else 'N/D'
+        
+        # Captura a exceção específica que causou a falha
+        exception_obj = context.get('exception', Exception('Erro desconhecido'))
+        error_message = str(exception_obj)
+
         execution_date = context['execution_date']
-        error_message = str(context.get('exception', 'Erro desconhecido'))
         
         logger.critical(f"❌ FALHA GLOBAL na DAG {dag_id}: {error_message}")
         
+        # --- CORREÇÃO AQUI ---
+        # to_emails foi removido para usar a lista padrão do .env
         alert_system.send_email_alert(
             f"🚨 FALHA GLOBAL - DAG {dag_id}",
             f"""Falha global no pipeline ETL:
-DAG: {dag_id}
-Data: {execution_date}
-Erro: {error_message}
-Status: Pipeline completamente parado
-Ação: Intervenção imediata necessária""",
-            to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
+        DAG: {dag_id}
+        Tarefa com falha: {failed_task_id}
+        Data: {execution_date}
+        Erro: {error_message}
+        Status: Pipeline completamente parado
+        Ação: Intervenção imediata necessária
+        Detalhes do Log: {log_url}"""
         )
             
     except Exception as e:
@@ -140,14 +88,14 @@ def dag_success_callback(context):
         
         duration = context['dag_run'].duration
         
+        # to_emails foi removido para usar a lista padrão do .env
         alert_system.send_email_alert(
             f"✅ SUCESSO - DAG {dag_id} Concluída",
             f"""Pipeline ETL executado com sucesso:
 DAG: {dag_id}
 Data: {execution_date}
 Status: Todos os dados processados com sucesso
-Tempo de execução: {duration} segundos""",
-            to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
+Tempo de execução: {duration} segundos"""
         )
             
     except Exception as e:
@@ -157,18 +105,16 @@ Tempo de execução: {duration} segundos""",
 # Definição da DAG
 
 with DAG(
-    dag_id="pipeline_etl_maxinutri",
+    dag_id="desafio_etl_maxinutri",
     start_date=pendulum.datetime(2023, 1, 1, tz="America/Sao_Paulo"),
     schedule="@daily",
     catchup=False,
     tags=["etl", "desafio"],
+    # on_failure_callback e on_success_callback estão APENAS na DAG,
+    # garantindo que o e-mail seja enviado apenas uma vez, no final da execução.
     on_failure_callback=dag_failure_callback,
     on_success_callback=dag_success_callback,
     default_args={
-        'on_failure_callback': on_failure_callback,
-        'on_success_callback': on_success_callback,
-        'email_on_retry': False,
-        'on_success_callback': False, # on_success_callback,
         'email_on_failure': False, # Desativar emails padrão do Airflow
         'email_on_retry': False,
         'retries': 2,
@@ -196,46 +142,9 @@ with DAG(
         except Exception as e:
             logger.error(f"❌ Erro na transformação: {e}")
             raise
-
-    def run_create_database():
-        """Cria o banco de dados se ele não existir."""
-        hook = PostgresHook(postgres_conn_id="postgres-default")
-        conn = None
-        cur = None
-        try:
-            conn = hook.get_conn()
-            conn.autocommit = True
-            cur = conn.cursor()
-            
-            db_name = "case_dw"
-
-            cur.execute(SQL("SELECT 1 FROM pg_database WHERE datname = %s"), (db_name,))
-            exists = cur.fetchone()
-
-            if not exists:
-                logger.info(f"Criando o banco de dados '{db_name}'...")
-                cur.execute(SQL("CREATE DATABASE {}").format(Identifier(db_name)))
-                logger.info(f"✅ Banco de dados '{db_name}' criado com sucesso.")
-            else:
-                logger.info(f"📊 Banco de dados '{db_name}' já existe.")
-
-        except OperationalError as e:
-            logger.error(f"❌ Erro de conexão ao criar banco: {e}")
-            raise
-        except ProgrammingError as e:
-            logger.error(f"❌ Erro de SQL ao criar banco: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"❌ Erro inesperado ao criar banco: {e}")
-            raise
-        finally:
-            if cur:
-                cur.close()
-            if conn:
-                conn.close()
     
     def run_load_task():
-        """Cria a conexão e executa o carregamento dos dados no banco de dados!"""
+        """Cria a conexão e executa o carregamento dos dados no banco de dados."""
         conn = None
         cur = None
         try:
@@ -339,12 +248,11 @@ with DAG(
             alert_system.send_email_alert(
                 "📊 Relatório Diário - ETL Concluído",
                 """Processamento ETL diário concluído com sucesso!
-✅ Extração: Dados extraídos da API
-✅ Transformação: Dados limpos e processados
-✅ Carga: Dados carregados no Data Warehouse
-✅ Validação: Qualidade dos dados verificada
-Status: Pipeline completo executado com sucesso""",
-                to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
+        ✅ Extração: Dados extraídos da API
+        ✅ Transformação: Dados limpos e processados
+        ✅ Carga: Dados carregados no Data Warehouse
+        ✅ Validação: Qualidade dos dados verificada
+        Status: Pipeline completo executado com sucesso"""
             )
             logger.info("✅ Relatório final enviado")
             
@@ -366,14 +274,6 @@ Status: Pipeline completo executado com sucesso""",
         retries=2,
         retry_delay=pendulum.duration(seconds=30),
         execution_timeout=pendulum.duration(minutes=30),
-    )
-
-    create_db_task = PythonOperator(
-        task_id="create_database_if_not_exists",
-        python_callable=run_create_database,
-        retries=2,
-        retry_delay=pendulum.duration(seconds=30),
-        execution_timeout=pendulum.duration(minutes=5),
     )
 
     load_task = PythonOperator(
@@ -400,5 +300,5 @@ Status: Pipeline completo executado com sucesso""",
         execution_timeout=pendulum.duration(minutes=5),
     )
 
-    # Definindo as dependências
-    extract_task >> transform_task >> create_db_task >> load_task >> validate_task >> report_task
+    # Fluxo de Tarefas no Airflow
+    extract_task >> transform_task >> load_task >> validate_task >> report_task
