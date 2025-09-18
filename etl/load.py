@@ -1,8 +1,9 @@
+# load.py
 import pandas as pd
 import psycopg2
 from psycopg2 import sql
 import os
-import numpy as np
+from psycopg2.extras import execute_values
 from pathlib import Path
 import logging
 from airflow.providers.postgres.hooks.postgres import PostgresHook
@@ -22,94 +23,106 @@ def load_and_convert_data(csv_path):
     Carrega o CSV e converte todas as colunas para os tipos corretos.
     """
     logger.info(f"Carregando dados de: {csv_path}")
-    
-    # Carregar CSV com configurações otimizadas
-    df = pd.read_csv(csv_path, low_memory=False)
+
+    # Carregar CSV com configurações otimizadas e conversão de tipos na leitura
+    # A etapa de transform.py já deve ter gerado um CSV com tipos consistentes.
+    # Esta função agora foca apenas em carregar os dados para o load.
+    df = pd.read_csv(
+        csv_path,
+        low_memory=False,
+        parse_dates=[
+            'order_purchase_timestamp', 'order_approved_at',
+            'order_delivered_carrier_date', 'order_delivered_customer_date',
+            'order_estimated_delivery_date', 'review_creation_date',
+            'review_answer_timestamp'
+        ],
+        dtype={
+            'order_id': str, 'customer_id': str, 'product_id': str, 'seller_id': str,
+            'review_id': str, 'customer_zip_code_prefix': str,
+            'seller_zip_code_prefix': str, 'geolocation_zip_code_prefix': str
+        }
+    )
     logger.info(f"Dados carregados: {len(df)} registros, {len(df.columns)} colunas")
-    
-    # ========== CONVERSÕES DE TIPO ==========
-    
-    # 1. IDs como string (preservar formato)
-    id_columns = ['order_id', 'customer_id', 'product_id', 'seller_id', 'review_id']
-    for col in id_columns:
-        if col in df.columns:
-            df[col] = df[col].astype(str).replace('nan', np.nan)
-    
-    # 2. CEPs como string (preservar zeros à esquerda)
-    cep_columns = ['customer_zip_code_prefix', 'seller_zip_code_prefix', 'geolocation_zip_code_prefix']
-    for col in cep_columns:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.replace('.0', '').replace('nan', np.nan)
-            # Limitar tamanho para evitar valores muito grandes
-            df[col] = df[col].str[:10]
-    
-    # 3. Cidades e textos
-    text_columns = ['customer_city', 'customer_state', 'seller_city', 'seller_state', 
-                   'product_category_name', 'review_comment_title', 'review_comment_message']
-    for col in text_columns:
-        if col in df.columns:
-            df[col] = df[col].astype(str).replace('nan', np.nan)
-            if col.endswith('_state'):
-                df[col] = df[col].str.upper().str.strip()
-            elif 'city' in col:
-                df[col] = df[col].str.title().str.strip()
-    
-    # 4. Valores numéricos com validação
-    numeric_conversions = {
-        'product_weight_g': {'type': 'float', 'min': 0, 'max': 50000},
-        'product_length_cm': {'type': 'float', 'min': 0, 'max': 500},
-        'product_height_cm': {'type': 'float', 'min': 0, 'max': 500},
-        'product_width_cm': {'type': 'float', 'min': 0, 'max': 500},
-        'product_photos_qty': {'type': 'int', 'min': 0, 'max': 50},
-        'price': {'type': 'float', 'min': 0, 'max': 100000},
-        'freight_value': {'type': 'float', 'min': 0, 'max': 10000},
-        'review_score': {'type': 'int', 'min': 1, 'max': 5},
-        'payment_installments': {'type': 'int', 'min': 1, 'max': 24},
-        'payment_value': {'type': 'float', 'min': 0, 'max': 100000}
-    }
-    
-    for col, config in numeric_conversions.items():
-        if col in df.columns:
-            # Converter para numérico
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-            # Aplicar validação de range
-            min_val, max_val = config['min'], config['max']
-            df[col] = df[col].where((df[col] >= min_val) & (df[col] <= max_val), np.nan)
-            
-            logger.info(f"Coluna {col}: {df[col].notna().sum()} valores válidos")
-    
-    # 5. Datas
-    date_columns = ['order_purchase_timestamp', 'order_approved_at', 'order_delivered_carrier_date',
-                   'order_delivered_customer_date', 'order_estimated_delivery_date', 
-                   'review_creation_date', 'review_answer_timestamp']
-    
-    for col in date_columns:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors='coerce')
-            # Validar range de anos
-            df[col] = df[col].where(df[col].dt.year.between(2000, 2030), np.nan)
-    
-    # 6. Limpeza final - remover linhas sem dados críticos
+
+    # Substituir 'nan' de strings que podem ter sido lidas como tal
+    for col in df.select_dtypes(include=['object']).columns:
+        # Usar pd.NA para consistência
+        df[col] = df[col].replace({'nan': pd.NA, 'None': pd.NA})
+
+    # Limpeza final - remover linhas sem dados críticos
     critical_columns = ['order_id', 'customer_id', 'product_id']
     existing_critical = [col for col in critical_columns if col in df.columns]
-    
+
     if existing_critical:
         before_cleanup = len(df)
-        df = df.dropna(subset=existing_critical)
+        df.dropna(subset=existing_critical, inplace=True)
         logger.info(f"Linhas removidas por falta de dados críticos: {before_cleanup - len(df)}")
-    
-    # Remover duplicatas
+
+    # Remover duplicatas (se ainda houver)
     if 'order_id' in df.columns and 'product_id' in df.columns:
+        key = ['order_id', 'product_id']
         before_dedup = len(df)
-        df = df.drop_duplicates(subset=['order_id', 'product_id'])
+        df.drop_duplicates(subset=key, inplace=True)
         logger.info(f"Duplicatas removidas: {before_dedup - len(df)}")
-    
-    logger.info(f"Dados finais após conversão: {len(df)} registros")
+
+    logger.info(f"Dados finais prontos para carga: {len(df)} registros")
     return df
 
+def get_dim_keys_in_batch(cur, table_name, business_key_col, business_keys, surrogate_key_col="sk"):
+    """Busca um lote de chaves substitutas de uma só vez."""
+    if not business_keys:
+        return {}
+
+    query = sql.SQL("""
+        SELECT {business_key_col}, {surrogate_key_col}
+        FROM {table}
+        WHERE {business_key_col} = ANY(%s);
+    """).format(
+        table=sql.Identifier(table_name),
+        business_key_col=sql.Identifier(business_key_col),
+        surrogate_key_col=sql.Identifier(f"{table_name.split('_')[1]}_{surrogate_key_col}")
+    )
+
+    try:
+        cur.execute(query, (list(business_keys),))
+        return dict(cur.fetchall())
+    except psycopg2.Error as e:
+        logger.error(f"Erro ao buscar chaves em lote para {table_name}: {e}")
+        cur.connection.rollback()
+        return {}
+
+def insert_in_batch(cur, table_name, columns, data, conflict_target, operation_name):
+    """
+    Insere dados em lote usando execute_values para alta performance.
+    """
+    if not data:
+        logger.info(f"Nenhum dado para inserir em {table_name}.")
+        return 0
+
+    query = sql.SQL("""
+        INSERT INTO {table} ({columns})
+        VALUES %s
+        ON CONFLICT ({conflict_target}) DO NOTHING;
+    """).format(
+        table=sql.Identifier(table_name),
+        columns=sql.SQL(', ').join(map(sql.Identifier, columns)),
+        conflict_target=sql.SQL(', ').join(map(sql.Identifier, conflict_target))
+    )
+
+    try:
+        execute_values(cur, query, data, page_size=500)
+        logger.info(f"Sucesso na operação '{operation_name}': {cur.rowcount} linhas inseridas/afetadas.")
+        return cur.rowcount
+    except psycopg2.Error as e:
+        logger.error(f"Erro na inserção em lote para '{operation_name}': {e}")
+        cur.connection.rollback()
+        return 0
+
 def execute_schema(cur):
-    """Executa o script de criação de schema completo"""
+    """
+    Executa o script de criação de schema de forma idempotente, ignorando erros de
+    tabelas ou restrições que já existam.
+    """
     try:
         with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
             schema_sql = f.read()
@@ -125,34 +138,31 @@ def execute_schema(cur):
                         logger.info(f"Executando statement {i+1}/{len(statements)}")
                         
             except psycopg2.Error as e:
-                # Ignorar erro se tabela/índice já existir
-                if "already exists" not in str(e):
-                    logger.warning(f"Erro no statement {i+1}: {e}")
-                    raise
-                else:
+                # CORREÇÃO: Trata erros de "already exists" ou "duplicate" de forma genérica
+                if "already exists" in str(e) or "duplicate" in str(e) or "duplicate key" in str(e) or "restrição" in str(e):
                     logger.debug(f"Entidade já existe: {statement[:50]}...")
+                    cur.connection.rollback() # Necessário para continuar a transacao
+                else:
+                    logger.warning(f"Erro no statement {i+1}: {e}")
+                    raise # Re-lança outros erros que nao sejam de 'já existe'
         
         logger.info("Schema criado/atualizado com sucesso.")
         
+    except FileNotFoundError:
+        logger.error(f"Arquivo schema.sql não encontrado em: {SCHEMA_PATH}")
+        raise
     except Exception as e:
         logger.error(f"Erro ao executar o schema: {e}")
         raise
 
-def safe_insert_value(value, expected_type='string'):
-    """
-    Converte valores de forma segura para inserção no banco.
-    """
-    if pd.isna(value) or value is None or str(value).lower() in ['nan', 'none', '']:
+def safe_insert_value(value):
+    """Garante que valores nulos do pandas sejam convertidos para None."""
+    if pd.isna(value):
         return None
-    
-    try:
-        if expected_type == 'int':
-            return int(float(value))  # Converter via float primeiro para casos como "5.0"
-        elif expected_type == 'float':
-            return float(value)
-        else:
-            return str(value).strip()
-    except (ValueError, OverflowError):
+    if isinstance(value, str):
+        return value.strip()
+    # Para números e datas, o tipo já deve estar correto do pandas
+    if isinstance(value, (int, float)):
         return None
 
 def execute_with_retry(cur, query, params, operation_name, max_retries=3):
@@ -177,42 +187,29 @@ def execute_with_retry(cur, query, params, operation_name, max_retries=3):
     
     return False
 
-def insert_dim_cliente(cur, df):
+def insert_dim_cliente(cur, df: pd.DataFrame):
     """Insere dados na tabela de dimensão de clientes."""
     logger.info("Inserindo dimensão de clientes...")
     
     required_cols = ["customer_id", "customer_city", "customer_state", "customer_zip_code_prefix"]
     if not all(col in df.columns for col in required_cols):
-        logger.warning("Colunas de cliente não encontradas, pulando inserção")
+        logger.warning("Colunas de cliente não encontradas, pulando inserção.")
         return
     
-    clientes = df[required_cols].drop_duplicates()
-    inserted = 0
-    failed = 0
+    clientes = df[required_cols].drop_duplicates().dropna(subset=['customer_id'])
     
-    for _, row in clientes.iterrows():
-        success = execute_with_retry(
-            cur,
-            """INSERT INTO dim_cliente (cliente_id, cidade, estado, cep_prefix)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (cliente_id) DO NOTHING;""",
-            (
-                safe_insert_value(row["customer_id"]),
-                safe_insert_value(row["customer_city"]),
-                safe_insert_value(row["customer_state"]),
-                safe_insert_value(row["customer_zip_code_prefix"])
-            ),
-            f"inserção cliente {row['customer_id']}"
-        )
-        
-        if success:
-            inserted += 1
-        else:
-            failed += 1
+    data_to_insert = [tuple(row) for row in clientes.itertuples(index=False)]
     
-    logger.info(f"Clientes - Inseridos: {inserted}, Falhas: {failed}")
+    insert_in_batch(
+        cur,
+        table_name="dim_cliente",
+        columns=["cliente_id", "cidade", "estado", "cep_prefix"],
+        data=data_to_insert,
+        conflict_target=["cliente_id"],
+        operation_name="dim_cliente"
+    )
 
-def insert_dim_produto(cur, df):
+def insert_dim_produto(cur, df: pd.DataFrame):
     """Insere dados na tabela de dimensão de produtos."""
     logger.info("Inserindo dimensão de produtos...")
     
@@ -221,39 +218,30 @@ def insert_dim_produto(cur, df):
     
     existing_cols = [col for col in required_cols if col in df.columns]
     if not existing_cols:
-        logger.warning("Colunas de produto não encontradas, pulando inserção")
+        logger.warning("Colunas de produto não encontradas, pulando inserção.")
         return
     
-    produtos = df[existing_cols].drop_duplicates()
-    inserted = 0
-    failed = 0
+    # Garantir que todas as colunas existam, preenchendo com None se necessário
+    produtos_df = df[existing_cols].drop_duplicates().dropna(subset=['product_id'])
+    for col in required_cols:
+        if col not in produtos_df.columns:
+            produtos_df[col] = None
     
-    for _, row in produtos.iterrows():
-        success = execute_with_retry(
-            cur,
-            """INSERT INTO dim_produto (produto_id, categoria, peso_g, comprimento_cm, altura_cm, largura_cm, fotos_qty)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (produto_id) DO NOTHING;""",
-            (
-                safe_insert_value(row.get("product_id")),
-                safe_insert_value(row.get("product_category_name")),
-                safe_insert_value(row.get("product_weight_g"), 'float'),
-                safe_insert_value(row.get("product_length_cm"), 'float'),
-                safe_insert_value(row.get("product_height_cm"), 'float'),
-                safe_insert_value(row.get("product_width_cm"), 'float'),
-                safe_insert_value(row.get("product_photos_qty"), 'int')
-            ),
-            f"inserção produto {row.get('product_id')}"
-        )
-        
-        if success:
-            inserted += 1
-        else:
-            failed += 1
+    # Reordenar colunas para corresponder à ordem do INSERT
+    produtos_df = produtos_df[required_cols]
     
-    logger.info(f"Produtos - Inseridos: {inserted}, Falhas: {failed}")
+    data_to_insert = [tuple(row) for row in produtos_df.itertuples(index=False)]
 
-def insert_dim_tempo(cur, df):
+    insert_in_batch(
+        cur,
+        table_name="dim_produto",
+        columns=["produto_id", "categoria", "peso_g", "comprimento_cm", "altura_cm", "largura_cm", "fotos_qty"],
+        data=data_to_insert,
+        conflict_target=["produto_id"],
+        operation_name="dim_produto"
+    )
+
+def insert_dim_tempo(cur, df: pd.DataFrame):
     """Insere dados na tabela de dimensão de tempo."""
     logger.info("Inserindo dimensão de tempo...")
     
@@ -264,35 +252,28 @@ def insert_dim_tempo(cur, df):
             break
     
     if not date_col:
-        logger.warning("Coluna de data não encontrada, pulando inserção de tempo")
+        logger.warning("Coluna de data não encontrada, pulando inserção de tempo.")
         return
     
     df_temp = df.copy()
     df_temp['data_pedido'] = pd.to_datetime(df_temp[date_col], errors='coerce').dt.date
     datas = df_temp['data_pedido'].dropna().drop_duplicates()
     
-    inserted = 0
-    failed = 0
-    
-    for data in datas:
-        if pd.notna(data):
-            success = execute_with_retry(
-                cur,
-                """INSERT INTO dim_tempo (data, ano, mes, dia, dia_da_semana)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (data) DO NOTHING;""",
-                (data, data.year, data.month, data.day, data.strftime('%A')),
-                f"inserção data {data}"
-            )
-            
-            if success:
-                inserted += 1
-            else:
-                failed += 1
-    
-    logger.info(f"Datas - Inseridas: {inserted}, Falhas: {failed}")
+    data_to_insert = [
+        (data, data.year, data.month, data.day, data.strftime('%A'))
+        for data in datas if pd.notna(data)
+    ]
 
-def insert_dim_avaliacao(cur, df):
+    insert_in_batch(
+        cur,
+        table_name="dim_tempo",
+        columns=["data", "ano", "mes", "dia", "dia_da_semana"],
+        data=data_to_insert,
+        conflict_target=["data"],
+        operation_name="dim_tempo"
+    )
+
+def insert_dim_avaliacao(cur, df: pd.DataFrame):
     """Insere dados na tabela de dimensão de avaliação."""
     logger.info("Inserindo dimensão de avaliação...")
     
@@ -300,40 +281,31 @@ def insert_dim_avaliacao(cur, df):
     existing_review_cols = [col for col in review_cols if col in df.columns]
     
     if not existing_review_cols:
-        logger.warning("Colunas de avaliação não encontradas, pulando inserção")
+        logger.warning("Colunas de avaliação não encontradas, pulando inserção.")
         return
     
     # Filtrar apenas linhas que têm review_score válido
-    df_reviews = df[df['review_score'].notna()].copy() if 'review_score' in df.columns else df.copy()
-    
-    if len(df_reviews) == 0:
-        logger.warning("Nenhuma avaliação válida encontrada")
+    if 'review_score' not in df.columns:
+        logger.warning("Coluna 'review_score' não encontrada.")
         return
+
+    df_reviews = df[df['review_score'].notna()].copy()
     
-    avaliacoes = df_reviews[existing_review_cols].drop_duplicates()
-    inserted = 0
-    failed = 0
-    
-    for _, row in avaliacoes.iterrows():
-        success = execute_with_retry(
-            cur,
-            """INSERT INTO dim_avaliacao (review_score, review_comment_title, review_comment_message)
-            VALUES (%s, %s, %s)
-            ON CONFLICT DO NOTHING;""",
-            (
-                safe_insert_value(row.get("review_score"), 'int'),
-                safe_insert_value(row.get("review_comment_title", "Sem título")),
-                safe_insert_value(row.get("review_comment_message", "Sem comentários"))
-            ),
-            f"inserção avaliação"
-        )
-        
-        if success:
-            inserted += 1
-        else:
-            failed += 1
-    
-    logger.info(f"Avaliações - Inseridas: {inserted}, Falhas: {failed}")
+    # Preencher colunas ausentes com valores padrão
+    if 'review_comment_title' not in df_reviews.columns: df_reviews['review_comment_title'] = "Sem título"
+    if 'review_comment_message' not in df_reviews.columns: df_reviews['review_comment_message'] = "Sem comentários"
+
+    avaliacoes = df_reviews[review_cols].drop_duplicates()
+    data_to_insert = [tuple(row) for row in avaliacoes.itertuples(index=False)]
+
+    insert_in_batch(
+        cur,
+        table_name="dim_avaliacao",
+        columns=["review_score", "review_comment_title", "review_comment_message"],
+        data=data_to_insert,
+        conflict_target=["review_score", "review_comment_title", "review_comment_message"],
+        operation_name="dim_avaliacao"
+    )
 
 def get_dim_key_safe(cur, table_name, business_key_col, business_key_value, surrogate_key_col):
     """Função segura para buscar chave substituta com tratamento de transação abortada."""
@@ -356,95 +328,74 @@ def get_dim_key_safe(cur, table_name, business_key_col, business_key_value, surr
             cur.connection.rollback()
         return None
 
-def insert_fato_pedido(cur, df):
+def insert_fato_pedido(cur, df: pd.DataFrame):
     """Insere dados na tabela de fatos de pedidos com controle de transação."""
     logger.info("Inserindo fatos de pedidos...")
     
     inserted = 0
     skipped = 0
-    batch_size = 100
+    batch_size = 1000  # Aumentar o tamanho do lote para melhor performance
     
     # Processar em lotes para melhor controle de transação
     for batch_start in range(0, len(df), batch_size):
         batch_end = min(batch_start + batch_size, len(df))
         batch_df = df.iloc[batch_start:batch_end]
         
-        logger.info(f"Processando lote {batch_start}-{batch_end} de {len(df)}")
+        logger.info(f"Processando lote de fatos: {batch_start}-{batch_end} de {len(df)}")
         
-        batch_inserted = 0
-        batch_skipped = 0
+        # 1. Buscar todas as chaves SK em lote
+        cliente_keys = get_dim_keys_in_batch(cur, 'dim_cliente', 'cliente_id', set(batch_df['customer_id'].dropna()))
+        produto_keys = get_dim_keys_in_batch(cur, 'dim_produto', 'produto_id', set(batch_df['product_id'].dropna()))
         
-        for idx, row in batch_df.iterrows():
-            try:
-                # Obter chaves substitutas das dimensões
-                cliente_sk = get_dim_key_safe(cur, 'dim_cliente', 'cliente_id', 
-                                            safe_insert_value(row.get('customer_id')), 'cliente_sk')
-                produto_sk = get_dim_key_safe(cur, 'dim_produto', 'produto_id', 
-                                            safe_insert_value(row.get('product_id')), 'produto_sk')
-                
-                # Data do pedido
-                data_pedido = None
-                for date_col in ['order_purchase_timestamp', 'order_approved_at']:
-                    if date_col in df.columns and pd.notna(row.get(date_col)):
-                        data_pedido = pd.to_datetime(row[date_col], errors='coerce').date()
-                        break
-                
-                tempo_sk = get_dim_key_safe(cur, 'dim_tempo', 'data', data_pedido, 'tempo_sk') if data_pedido else None
-                
-                # Avaliação
-                avaliacao_sk = None
-                if 'review_score' in df.columns and pd.notna(row.get('review_score')):
-                    review_score = safe_insert_value(row['review_score'], 'int')
-                    if review_score:
-                        avaliacao_sk = get_dim_key_safe(cur, 'dim_avaliacao', 'review_score', 
-                                                      review_score, 'avaliacao_sk')
-                
-                # Verificar se temos dados mínimos necessários
-                order_id = safe_insert_value(row.get('order_id'))
-                if not order_id or not cliente_sk or not produto_sk:
-                    batch_skipped += 1
-                    continue
-                
-                # Inserir na tabela de fatos
-                success = execute_with_retry(
-                    cur,
-                    """INSERT INTO fato_pedido (
-                        pedido_id, cliente_sk, produto_sk, tempo_sk, avaliacao_sk,
-                        status_pedido, preco, frete
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (pedido_id) DO NOTHING;""",
-                    (
-                        order_id,
-                        cliente_sk,
-                        produto_sk,
-                        tempo_sk,
-                        avaliacao_sk,
-                        safe_insert_value(row.get("order_status")),
-                        safe_insert_value(row.get("price"), 'float'),
-                        safe_insert_value(row.get("freight_value"), 'float')
-                    ),
-                    f"inserção pedido {order_id}"
-                )
-                
-                if success:
-                    batch_inserted += 1
-                else:
-                    batch_skipped += 1
-                    
-            except Exception as e:
-                logger.warning(f"Erro não tratado no pedido {row.get('order_id')}: {e}")
-                batch_skipped += 1
+        batch_df['data_pedido'] = pd.to_datetime(batch_df['order_purchase_timestamp'], errors='coerce').dt.date
+        tempo_keys = get_dim_keys_in_batch(cur, 'dim_tempo', 'data', set(batch_df['data_pedido'].dropna()))
         
-        # Commit do lote
-        try:
-            cur.connection.commit()
-            logger.info(f"Lote commitado - Inseridos: {batch_inserted}, Pulados: {batch_skipped}")
-        except psycopg2.Error as e:
-            logger.error(f"Erro ao fazer commit do lote: {e}")
-            cur.connection.rollback()
+        # Mapear chaves de volta para o DataFrame do lote
+        batch_df['cliente_sk'] = batch_df['customer_id'].map(cliente_keys)
+        batch_df['produto_sk'] = batch_df['product_id'].map(produto_keys)
+        batch_df['tempo_sk'] = batch_df['data_pedido'].map(tempo_keys)
+        
+        # Para avaliação, a chave é composta, então buscamos individualmente (ou criamos uma chave de negócio simples)
+        # Por simplicidade, mantemos a busca individual aqui, pois é mais complexo
+        batch_df['avaliacao_sk'] = None # Placeholder
+
+        # 2. Preparar dados para inserção em lote
+        # Filtrar linhas que não conseguiram o mapeamento de chaves críticas
+        batch_df.dropna(subset=['order_id', 'cliente_sk', 'produto_sk'], inplace=True)
+        
+        if batch_df.empty:
+            logger.warning("Nenhum dado válido no lote para inserir na tabela de fatos.")
+            skipped += len(batch_df)
+            continue
+
+        columns_to_insert = [
+            'pedido_id', 'cliente_sk', 'produto_sk', 'tempo_sk', 'avaliacao_sk',
+            'status_pedido', 'preco', 'frete'
+        ]
+        
+        # Garantir que todas as colunas existam
+        for col in ['status_pedido', 'preco', 'frete']:
+            if col not in batch_df.columns:
+                batch_df[col] = None
+
+        data_to_insert = [
+            tuple(row) for row in batch_df[columns_to_insert].itertuples(index=False)
+        ]
+
+        # 3. Inserir o lote
+        batch_inserted = insert_in_batch(
+            cur,
+            table_name="fato_pedido",
+            columns=columns_to_insert,
+            data=data_to_insert,
+            conflict_target=["pedido_id"],
+            operation_name=f"fato_pedido_lote_{batch_start}"
+        )
+        
+        cur.connection.commit()
         
         inserted += batch_inserted
-        skipped += batch_skipped
+        skipped += (len(batch_df) - batch_inserted)
     
     logger.info(f"TOTAL - Pedidos inseridos: {inserted}, Pulados: {skipped}")
 
@@ -452,13 +403,11 @@ def insert_fato_pedido(cur, df):
 def main(cur):
     """Função principal para o ETL com controle robusto de transações."""
     try:
-        # 1. Carregar e converter dados
+        # 1. Carregar dados
         if not CSV_PATH.exists():
             raise FileNotFoundError(f"Arquivo não encontrado: {CSV_PATH}")
         
         df = load_and_convert_data(CSV_PATH)
-        
-        # O cur já é um cursor válido fornecido pela DAG
         
         # 2. Criar schema
         logger.info("=== CRIANDO SCHEMA ===")
@@ -467,22 +416,22 @@ def main(cur):
         
         # 3. Inserir dimensões (cada uma em sua própria transação)
         logger.info("=== INSERINDO DIMENSÕES ===")
-        
+
         insert_dim_cliente(cur, df)
         cur.connection.commit()
-        logger.info("Dimensão clientes commitada")
-        
+        logger.info("Dimensão de clientes commitada.")
+
         insert_dim_produto(cur, df)
         cur.connection.commit()
-        logger.info("Dimensão produtos commitada")
-        
+        logger.info("Dimensão de produtos commitada.")
+
         insert_dim_tempo(cur, df)
         cur.connection.commit()
-        logger.info("Dimensão tempo commitada")
-        
+        logger.info("Dimensão de tempo commitada.")
+
         insert_dim_avaliacao(cur, df)
         cur.connection.commit()
-        logger.info("Dimensão avaliação commitada")
+        logger.info("Dimensão de avaliação commitada.")
         
         # 4. Inserir fatos (processamento em lotes)
         logger.info("=== INSERINDO FATOS ===")
@@ -496,12 +445,14 @@ def main(cur):
     except psycopg2.Error as e:
         logger.error(f"Erro de banco de dados: {e}")
         cur.connection.rollback()
+        raise
     except Exception as e:
         logger.error(f"Erro inesperado: {e}")
-        cur.connection.rollback()
+        if cur and cur.connection:
+            cur.connection.rollback()
+        raise
     finally:
-        # A conexão será fechada pela DAG
-        pass
+        logger.info("Função de carga finalizada.")
 
 if __name__ == "__main__":
     main()
