@@ -7,6 +7,19 @@
 
 airflow:
   connections:
+    # Conexão Local com o banco de dados Postgres
+    - conn_id: nome-da-conexao
+      conn_type: postgres
+      conn_host: host.docker.internal
+      conn_schema:  nome-do-banco
+      conn_login: login-do-banco
+      conn_password: senha-do-banco
+      conn_port: 5432 
+      conn_description: 
+      conn_extra:
+        sslmode: 
+        connect_timeout: 
+        
     - conn_id: nome-da-conexao
       conn_type: postgres
       conn_host: host.docker.internal

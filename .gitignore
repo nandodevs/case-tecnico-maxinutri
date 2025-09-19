@@ -116,6 +116,6 @@ upgrade-test*
 airflow.cfg
 airflow.db
 .airflowignore
-airflow-settings.yaml
+airflow_settings.yaml
 logs/
 dags/test_dag.py

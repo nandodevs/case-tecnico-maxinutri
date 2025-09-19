@@ -49,11 +49,11 @@ def on_failure_callback(context):
         task_id = context['task_instance'].task_id
         
         # Correção aqui: usa .get() para evitar erro se a chave não existir
-        execution_date = context.get('execution_date', pendulum.now(tz="America/Sao_Paulo"))
+        execution_date = context.get('execution_date', pendulum.now(tz="America/Sao_Paulo").format("DD-MM-YYYY HH:mm:ss"))
         
         exception = context.get('exception', Exception('Erro desconhecido'))
         
-        subject = f"Falha na DAG {dag_id} - Tarefa {task_id}"
+        subject = f"⚠️ Falha na DAG {dag_id} - Tarefa {task_id}"
         error_message = str(exception)
         
         is_critical = any(keyword in error_message.lower() for keyword in ['connection', 'database', 'timeout', 'critical', 'urgent'])
@@ -87,7 +87,7 @@ def on_success_callback(context):
         task_id = context['task_instance'].task_id
         
         # Correção aqui: usa .get() para evitar erro se a chave não existir
-        execution_date = context.get('execution_date', pendulum.now(tz="America/Sao_Paulo"))
+        execution_date = context.get('execution_date', pendulum.now(tz="America/Sao_Paulo").format("DD-MM-YYYY HH:mm:ss"))
         
         subject = f"✅ Sucesso na DAG {dag_id} - Tarefa {task_id}"
         message = f"""Tarefa executada com sucesso:
@@ -152,8 +152,6 @@ def dag_success_callback(context):
         
         duration = context['dag_run'].duration
         
-        # --- CORREÇÃO AQUI ---
-        # to_emails foi removido para usar a lista padrão do .env
         alert_system.send_email_alert(
             f"✅ SUCESSO - DAG {dag_id} Concluída",
             f"""Pipeline ETL executado com sucesso:
@@ -165,12 +163,56 @@ def dag_success_callback(context):
             
     except Exception as e:
         logger.error(f"Erro no callback de sucesso global: {e}")
+        
+# Função para criar o banco do DW       
+def create_database_if_not_exists():
+    """
+    Cria o banco de dados 'case_dw' se ele não existir.
+    Usa a conexão 'postgres_default' para se conectar ao banco de dados 'postgres' (padrão)
+    e então executa a criação do novo banco de dados.
+    """
+    db_name = "case_dw"
+    
+    # Conecta ao banco de dados padrão 'postgres' para poder criar um novo DB
+    hook = PostgresHook(postgres_conn_id="postgres-default", database="postgres")
+    conn = None
+    cur = None
+    try:
+        conn = hook.get_conn()
+        conn.autocommit = True  # Autocommit é necessário para CREATE DATABASE
+        cur = conn.cursor()
 
+        # Verifica se o banco de dados já existe
+        cur.execute(f"SELECT 1 FROM pg_database WHERE datname = '{db_name}'")
+        if cur.fetchone():
+            logger.info(f"Banco de dados '{db_name}' já existe. Nenhuma ação necessária.")
+        else:
+            # Cria o banco de dados
+            cur.execute(f"CREATE DATABASE {db_name}")
+            logger.info(f"Banco de dados '{db_name}' criado com sucesso.")
+            
+    except ProgrammingError as e:
+        if f'database "{db_name}" already exists' in str(e):
+            logger.info(f"Banco de dados '{db_name}' já existe (capturado por exceção).")
+        else:
+            logger.error(f"Erro ao criar o banco de dados '{db_name}': {e}")
+            raise
+    except OperationalError as e:
+        logger.error(f"Erro operacional ao conectar ou criar o banco de dados '{db_name}': {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Erro inesperado ao criar o banco de dados '{db_name}': {e}")
+        raise
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 # ---
 # Definição da DAG
 
 with DAG(
-    dag_id="desafio_etl_maxinutri",
+    dag_id="pipeline_etl_maxinutri",
     start_date=pendulum.datetime(2023, 1, 1, tz="America/Sao_Paulo"),
     schedule="@daily",
     catchup=False,
@@ -179,11 +221,9 @@ with DAG(
     on_success_callback=dag_success_callback,
     default_args={
         'on_failure_callback': on_failure_callback,
-        # 'on_success_callback': on_success_callback,
+        #'on_success_callback': on_success_callback,
         'email_on_retry': False,
-        'on_success_callback': False, # on_success_callback,
         'email_on_failure': False, # Desativar emails padrão do Airflow
-        'email_on_retry': False,
         'retries': 2,
         'retry_delay': pendulum.duration(minutes=5),
         'execution_timeout': pendulum.duration(minutes=120),
@@ -285,16 +325,18 @@ with DAG(
             if results.get("Tabelas existem", 0) < 5:
                 raise Exception("Não todas as tabelas foram criadas corretamente")
             
+            # --- Adicionando a nova checagem de dados ---
             if results.get("Total de pedidos", 0) == 0:
-                logger.warning("⚠️ Tabela de pedidos está vazia")
+                raise Exception("❌ ERRO: A tabela de pedidos está vazia! O pipeline será interrompido.")
             
             if results.get("Total de clientes", 0) == 0:
-                logger.warning("⚠️ Tabela de clientes está vazia")
+                raise Exception("❌ ERRO: A tabela de clientes está vazia! O pipeline será interrompido.")
             
             if results.get("Total de produtos", 0) == 0:
-                logger.warning("⚠️ Tabela de produtos está vazia")
+                raise Exception("❌ ERRO: A tabela de produtos está vazia! O pipeline será interrompido.")
+            # --- Fim da nova checagem ---
             
-            logger.info("✅ Validação concluída com sucesso")
+            logger.info("✅ Validação de dados concluída com sucesso")
             logger.info(f"📊 Resultados: {results}")
             
             return True
@@ -307,25 +349,25 @@ with DAG(
                 cur.close()
             if conn:
                 conn.close()
-
-    # def send_final_report():
-    #     """Envia relatório final do processamento."""
-    #     try:
-    #         alert_system = AlertSystem()
-    #         alert_system.send_email_alert(
-    #             "📊 Relatório Diário - ETL Concluído",
-    #             f"""Processamento ETL diário concluído com sucesso!
-    #     ✅ Extração: Dados extraídos da API
-    #     ✅ Transformação: Dados limpos e processados
-    #     ✅ Carga: Dados carregados no Data Warehouse
-    #     ✅ Validação: Qualidade dos dados verificada
-    #     Status: Pipeline completo executado com sucesso""",
-    #             to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
-    #         )
-    #         logger.info("✅ Relatório final enviado")
             
-    #     except Exception as e:
-    #         logger.warning(f"⚠️ Falha ao enviar relatório: {e}")
+    def send_final_report():
+        """Envia relatório final do processamento."""
+        try:
+            alert_system = AlertSystem()
+            alert_system.send_email_alert(
+                "📊 Relatório Diário - ETL Concluído",
+                f"""Processamento ETL diário concluído com sucesso!
+        ✅ Extração: Dados extraídos da API
+        ✅ Transformação: Dados limpos e processados
+        ✅ Carga: Dados carregados no Data Warehouse
+        ✅ Validação: Qualidade dos dados verificada
+        Status: Pipeline completo executado com sucesso""",
+                to_emails=["bugdroidgamesbr@gmail.com", "nando.devs@gmail.com"]
+            )
+            logger.info("✅ Relatório final enviado")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Falha ao enviar relatório: {e}")
 
     # Definindo as tarefas
     extract_task = PythonOperator(
@@ -339,6 +381,14 @@ with DAG(
     transform_task = PythonOperator(
         task_id="transform_data",
         python_callable=run_transform_task,
+        retries=2,
+        retry_delay=pendulum.duration(seconds=30),
+        execution_timeout=pendulum.duration(minutes=30),
+        )
+
+    create_dw_task = PythonOperator(
+        task_id="create_database_if_not_exists",
+        python_callable=create_database_if_not_exists,
         retries=2,
         retry_delay=pendulum.duration(seconds=30),
         execution_timeout=pendulum.duration(minutes=30),
@@ -360,13 +410,13 @@ with DAG(
         execution_timeout=pendulum.duration(minutes=10),
     )
 
-    # report_task = PythonOperator(
-    #     task_id="send_final_report",
-    #     python_callable=send_final_report,
-    #     retries=1,
-    #     retry_delay=pendulum.duration(seconds=15),
-    #     execution_timeout=pendulum.duration(minutes=5),
-    # )
+    report_task = PythonOperator(
+        task_id="send_final_report",
+        python_callable=send_final_report,
+        retries=1,
+        retry_delay=pendulum.duration(seconds=15),
+        execution_timeout=pendulum.duration(minutes=5),
+    )
 
     # Definindo as dependências
-    extract_task >> transform_task >> load_task >> validate_task
+    extract_task >> transform_task >> create_dw_task >> load_task >> validate_task >> report_task

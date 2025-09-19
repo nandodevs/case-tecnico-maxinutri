@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS dim_produto (
     comprimento_cm DECIMAL(10,2), -- DECIMAL para suportar decimais
     altura_cm DECIMAL(10,2),      -- DECIMAL para suportar decimais
     largura_cm DECIMAL(10,2),     -- DECIMAL para suportar decimais
-    fotos_qty SMALLINT             -- SMALLINT é suficiente para quantidade de fotos (0-32767)
+    fotos_qty INT             
 );
 
 -- Índices para performance
@@ -156,18 +156,3 @@ COMMENT ON TABLE fato_pedido IS 'Tabela de fatos com métricas de pedidos e vend
 COMMENT ON COLUMN dim_cliente.cep_prefix IS 'Prefixos de CEP para análise geográfica';
 COMMENT ON COLUMN fato_pedido.valor_total IS 'Valor total calculado (preço + frete)';
 
--- ==========================
--- TABELA DE LOG/MONITORAMENTO
--- ==========================
-CREATE TABLE IF NOT EXISTS etl_log (
-    log_id BIGSERIAL PRIMARY KEY,
-    tabela VARCHAR(100),
-    operacao VARCHAR(50),
-    registros_afetados INTEGER,
-    data_execucao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    status VARCHAR(20),
-    mensagem TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_etl_log_data ON etl_log(data_execucao);
-CREATE INDEX IF NOT EXISTS idx_etl_log_tabela ON etl_log(tabela);

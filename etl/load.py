@@ -156,14 +156,24 @@ def execute_schema(cur):
         raise
 
 def safe_insert_value(value):
-    """Garante que valores nulos do pandas sejam convertidos para None."""
+    """Converte valores Pandas/numpy em tipos nativos do Python para psycopg2."""
     if pd.isna(value):
         return None
-    if isinstance(value, str):
-        return value.strip()
-    # Para números e datas, o tipo já deve estar correto do pandas
-    if isinstance(value, (int, float)):
+    if isinstance(value, (pd._libs.missing.NAType, type(None))):
         return None
+    if isinstance(value, (pd.Timestamp, )):
+        return value.to_pydatetime()
+    if isinstance(value, (pd.Timedelta, )):
+        return value.to_pytimedelta()
+    if isinstance(value, (pd.Series, pd.DataFrame)):
+        return None
+    if hasattr(value, "item"):  # Converte numpy types (np.int64, np.float32 etc.)
+        return value.item()
+    return value
+
+def normalize_row(row):
+    """Aplica safe_insert_value em todos os valores de uma linha."""
+    return tuple(safe_insert_value(v) for v in row)
 
 def execute_with_retry(cur, query, params, operation_name, max_retries=3):
     """
@@ -213,24 +223,42 @@ def insert_dim_produto(cur, df: pd.DataFrame):
     """Insere dados na tabela de dimensão de produtos."""
     logger.info("Inserindo dimensão de produtos...")
     
-    required_cols = ["product_id", "product_category_name", "product_weight_g", 
-                    "product_length_cm", "product_height_cm", "product_width_cm", "product_photos_qty"]
+    required_cols = [
+        "product_id", "product_category_name", "product_weight_g", 
+        "product_length_cm", "product_height_cm", "product_width_cm", "product_photos_qty"
+    ]
     
     existing_cols = [col for col in required_cols if col in df.columns]
     if not existing_cols:
         logger.warning("Colunas de produto não encontradas, pulando inserção.")
         return
     
-    # Garantir que todas as colunas existam, preenchendo com None se necessário
-    produtos_df = df[existing_cols].drop_duplicates().dropna(subset=['product_id'])
+    produtos_df = df[existing_cols].drop_duplicates().dropna(subset=['product_id']).copy()
+    
+    # Converter para tipos nativos do Python
+    numeric_cols = ["product_weight_g", "product_length_cm", "product_height_cm", "product_width_cm", "product_photos_qty"]
+    for col in numeric_cols:
+        if col in produtos_df.columns:
+            produtos_df[col] = pd.to_numeric(produtos_df[col], errors="coerce").astype(float)
+    
     for col in required_cols:
         if col not in produtos_df.columns:
             produtos_df[col] = None
-    
-    # Reordenar colunas para corresponder à ordem do INSERT
+
     produtos_df = produtos_df[required_cols]
     
-    data_to_insert = [tuple(row) for row in produtos_df.itertuples(index=False)]
+    # --- CORREÇÃO CRÍTICA ---
+    # Converte cada valor para tipo Python nativo antes de inserir
+    data_to_insert = [
+        tuple(
+            None if pd.isna(val) else (val.item() if hasattr(val, "item") else val)
+            for val in row
+        )
+        for row in produtos_df.itertuples(index=False, name=None)
+    ]
+    # --- FIM DA CORREÇÃO ---
+    
+    logger.info(f"Preparando para inserir {len(data_to_insert)} registros na dim_produto.")
 
     insert_in_batch(
         cur,
@@ -240,6 +268,7 @@ def insert_dim_produto(cur, df: pd.DataFrame):
         conflict_target=["produto_id"],
         operation_name="dim_produto"
     )
+
 
 def insert_dim_tempo(cur, df: pd.DataFrame):
     """Insere dados na tabela de dimensão de tempo."""
@@ -328,41 +357,48 @@ def get_dim_key_safe(cur, table_name, business_key_col, business_key_value, surr
             cur.connection.rollback()
         return None
 
+# Insere dados na tabela fato_pedido
 def insert_fato_pedido(cur, df: pd.DataFrame):
     """Insere dados na tabela de fatos de pedidos com controle de transação."""
     logger.info("Inserindo fatos de pedidos...")
     
     inserted = 0
     skipped = 0
-    batch_size = 1000  # Aumentar o tamanho do lote para melhor performance
+    batch_size = 1000
     
-    # Processar em lotes para melhor controle de transação
     for batch_start in range(0, len(df), batch_size):
         batch_end = min(batch_start + batch_size, len(df))
-        batch_df = df.iloc[batch_start:batch_end]
+        batch_df = df.iloc[batch_start:batch_end].copy()
         
         logger.info(f"Processando lote de fatos: {batch_start}-{batch_end} de {len(df)}")
         
-        # 1. Buscar todas as chaves SK em lote
+        rename_map = {
+            'order_id': 'pedido_id',
+            'order_status': 'status_pedido',
+            'price': 'preco',
+            'freight_value': 'frete',
+            'order_approved_at': 'data_aprovacao',
+            'order_delivered_carrier_date': 'data_entrega_transportadora',
+            'order_delivered_customer_date': 'data_entrega_cliente',
+            'order_estimated_delivery_date': 'data_entrega_estimada'
+        }
+        batch_df = batch_df.rename(columns={k: v for k, v in rename_map.items() if k in batch_df.columns})
+                
+        # Buscar chaves substitutas
         cliente_keys = get_dim_keys_in_batch(cur, 'dim_cliente', 'cliente_id', set(batch_df['customer_id'].dropna()))
         produto_keys = get_dim_keys_in_batch(cur, 'dim_produto', 'produto_id', set(batch_df['product_id'].dropna()))
         
+        # Converter data do pedido para ligação com dim_tempo
         batch_df['data_pedido'] = pd.to_datetime(batch_df['order_purchase_timestamp'], errors='coerce').dt.date
         tempo_keys = get_dim_keys_in_batch(cur, 'dim_tempo', 'data', set(batch_df['data_pedido'].dropna()))
         
-        # Mapear chaves de volta para o DataFrame do lote
         batch_df['cliente_sk'] = batch_df['customer_id'].map(cliente_keys)
         batch_df['produto_sk'] = batch_df['product_id'].map(produto_keys)
         batch_df['tempo_sk'] = batch_df['data_pedido'].map(tempo_keys)
+        batch_df['avaliacao_sk'] = None  # placeholder por enquanto
         
-        # Para avaliação, a chave é composta, então buscamos individualmente (ou criamos uma chave de negócio simples)
-        # Por simplicidade, mantemos a busca individual aqui, pois é mais complexo
-        batch_df['avaliacao_sk'] = None # Placeholder
-
-        # 2. Preparar dados para inserção em lote
-        # Filtrar linhas que não conseguiram o mapeamento de chaves críticas
-        batch_df.dropna(subset=['order_id', 'cliente_sk', 'produto_sk'], inplace=True)
-        
+        # Remover linhas sem chaves obrigatórias
+        batch_df.dropna(subset=['pedido_id', 'cliente_sk', 'produto_sk'], inplace=True)
         if batch_df.empty:
             logger.warning("Nenhum dado válido no lote para inserir na tabela de fatos.")
             skipped += len(batch_df)
@@ -370,19 +406,25 @@ def insert_fato_pedido(cur, df: pd.DataFrame):
 
         columns_to_insert = [
             'pedido_id', 'cliente_sk', 'produto_sk', 'tempo_sk', 'avaliacao_sk',
-            'status_pedido', 'preco', 'frete'
+            'status_pedido', 'preco', 'frete',
+            'data_aprovacao', 'data_entrega_transportadora', 'data_entrega_cliente', 'data_entrega_estimada'
         ]
         
-        # Garantir que todas as colunas existam
-        for col in ['status_pedido', 'preco', 'frete']:
+        # Garantir que todas as colunas existem
+        for col in columns_to_insert:
             if col not in batch_df.columns:
                 batch_df[col] = None
 
+        # Conversão para tipos Python nativos (int, float, str, None)
         data_to_insert = [
-            tuple(row) for row in batch_df[columns_to_insert].itertuples(index=False)
+            tuple(
+                None if pd.isna(val) else (val.item() if hasattr(val, "item") else val)
+                for val in row
+            )
+            for row in batch_df[columns_to_insert].itertuples(index=False, name=None)
         ]
 
-        # 3. Inserir o lote
+        # Inserção no banco
         batch_inserted = insert_in_batch(
             cur,
             table_name="fato_pedido",
@@ -399,7 +441,7 @@ def insert_fato_pedido(cur, df: pd.DataFrame):
     
     logger.info(f"TOTAL - Pedidos inseridos: {inserted}, Pulados: {skipped}")
 
-# Seu novo main em load.py
+# Função principal
 def main(cur):
     """Função principal para o ETL com controle robusto de transações."""
     try:
