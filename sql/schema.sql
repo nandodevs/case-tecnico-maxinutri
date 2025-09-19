@@ -1,4 +1,3 @@
-
 -- ==========================
 -- DIMENSÃO CLIENTE
 -- ==========================
@@ -26,7 +25,7 @@ CREATE TABLE IF NOT EXISTS dim_produto (
     comprimento_cm DECIMAL(10,2), -- DECIMAL para suportar decimais
     altura_cm DECIMAL(10,2),      -- DECIMAL para suportar decimais
     largura_cm DECIMAL(10,2),     -- DECIMAL para suportar decimais
-    fotos_qty INT             
+    fotos_qty INTEGER             
 );
 
 -- Índices para performance
@@ -55,17 +54,18 @@ CREATE INDEX IF NOT EXISTS idx_dim_tempo_ano_mes_dia ON dim_tempo(ano, mes, dia)
 CREATE INDEX IF NOT EXISTS idx_dim_tempo_dia_semana ON dim_tempo(dia_da_semana);
 
 -- ==========================
--- DIMENSÃO AVALIAÇÃO
+-- DIMENSÃO AVALIAÇÃO (CORRIGIDA)
 -- ==========================
 CREATE TABLE IF NOT EXISTS dim_avaliacao (
     avaliacao_sk BIGSERIAL PRIMARY KEY,
-    review_score SMALLINT,     -- SMALLINT é suficiente para scores (geralmente 1-5)
+    review_id VARCHAR(255) UNIQUE NOT NULL,  -- ✅ Usar review_id como chave de negócio
+    review_score SMALLINT,     
     review_comment_title TEXT,
-    review_comment_message TEXT,
-    UNIQUE (review_score, review_comment_title, review_comment_message)
+    review_comment_message TEXT
 );
 
 -- Índices para performance
+CREATE INDEX IF NOT EXISTS idx_dim_avaliacao_id ON dim_avaliacao(review_id);
 CREATE INDEX IF NOT EXISTS idx_dim_avaliacao_score ON dim_avaliacao(review_score);
 CREATE INDEX IF NOT EXISTS idx_dim_avaliacao_title ON dim_avaliacao(review_comment_title);
 CREATE INDEX IF NOT EXISTS idx_dim_avaliacao_message ON dim_avaliacao(review_comment_message);
@@ -136,6 +136,8 @@ SELECT
     dt.data,
     dt.ano,
     dt.mes,
+    dt.trimestre,  -- Adicionando trimestre
+    dt.semana_ano, -- Adicionando semana do ano
     da.review_score,
     da.review_comment_title
 FROM fato_pedido fp
@@ -155,4 +157,3 @@ COMMENT ON TABLE fato_pedido IS 'Tabela de fatos com métricas de pedidos e vend
 
 COMMENT ON COLUMN dim_cliente.cep_prefix IS 'Prefixos de CEP para análise geográfica';
 COMMENT ON COLUMN fato_pedido.valor_total IS 'Valor total calculado (preço + frete)';
-
